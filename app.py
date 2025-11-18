@@ -105,9 +105,9 @@ def get_pdf_bytes(url: str):
 # ★★★ [NEW] 최종 안정화 뷰어 함수: 듀얼 모드 (전체/맥락) ★★★
 def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
     """ 
-    [듀얼 모드] target_page에 따라 로드 방식을 결정합니다. (타입 안정화 포함)
+    [듀얼 모드] target_page에 따라 로드 방식을 결정합니다. (NoneType 에러 방지 포함)
     """
-    # 1. 입력 페이지 번호를 확실하게 int로 변환 (기존 수정)
+    # 1. 입력 페이지 번호를 확실하게 int로 변환
     target_page = int(page) 
     
     if not pdf_url:
@@ -116,18 +116,17 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
 
     # 2. 로딩 모드 결정 및 페이지 계산
     if target_page == 1:
-        # 전체 로드 모드 (페이지 리스트 생성 안 함)
-        pages_to_load = None 
+        # ★★★ 최종 수정: None 대신 빈 리스트 []를 전달하여 라이브러리 오류 방지 ★★★
+        pages_to_load = [] 
         spinner_text = "📄 전체 문서를 로딩 중..."
     else:
         # 맥락 창 로드 (AI 검색 시)
         context_range = 20
         
-        # ★★★ 핵심 수정: start와 end를 계산 후 명시적으로 int()로 감싸 타입 안전성 확보 ★★★
+        # 타입 안정화된 start/end 계산
         start = int(max(1, target_page - context_range))
         end = int(target_page + context_range)
         
-        # 리스트 생성
         pages_to_load = list(range(start, end + 1))
         spinner_text = "📄 AI 검색 문맥 창을 로딩 중..."
 
@@ -140,8 +139,7 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
             input=pdf_data, 
             width=700, 
             height=1000,
-            # pages_to_load는 이제 int()로만 구성된 리스트입니다.
-            pages_to_render=pages_to_load 
+            pages_to_render=pages_to_load # [] 또는 계산된 페이지 리스트 전달
         )
     else:
         st.error("❌ PDF 문서를 로딩할 수 없습니다.")
@@ -310,4 +308,5 @@ else:
             st.rerun()
         else:
             st.sidebar.error("암호가 틀렸습니다.")
+
 
