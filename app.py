@@ -101,10 +101,26 @@ def get_pdf_base64(url: str):
         return None
 
 def render_native_pdf(pdf_url: str, page: int = 1):
-    """ 브라우저 자체 PDF 뷰어 (상단 링크 제거됨) """
+    """ 브라우저 자체 PDF 뷰어 """
     if not pdf_url:
         st.info("규정을 선택하세요.")
         return
+
+    # [안전장치] 원본 링크 제공
+    st.markdown(f"""
+    <a href="{pdf_url}" target="_blank" style="
+        display: inline-block;
+        background-color: #f0f2f6;
+        color: #31333F;
+        padding: 6px 12px;
+        border-radius: 4px;
+        text-decoration: none;
+        font-size: 14px;
+        margin-bottom: 10px;
+        border: 1px solid #d6d6d8;">
+        ↗️ 새 창에서 PDF 원본 열기 (화면이 안 보이면 클릭)
+    </a>
+    """, unsafe_allow_html=True)
 
     with st.spinner("📄 PDF 문서를 로딩 중입니다..."):
         base64_pdf = get_pdf_base64(pdf_url)
@@ -114,8 +130,6 @@ def render_native_pdf(pdf_url: str, page: int = 1):
         st.markdown(pdf_display, unsafe_allow_html=True)
     else:
         st.warning("⚠️ PDF 데이터를 불러올 수 없습니다.")
-        # (에러 발생 시에만 버튼 노출)
-        st.link_button("↗️ 새 창에서 열기", pdf_url)
 
 def set_pdf_url(url: str, page: int):
     st.session_state.current_pdf_url = url
@@ -150,6 +164,13 @@ supabase, ai_model = init_connections()
 if not supabase or not ai_model: st.stop()
 map_data = load_map_data(supabase)
 
+# ★★★ [복구된 부분] 합본 PDF URL 가져오기 ★★★
+try:
+    combined_pdf_url = supabase.storage.from_("regulations").get_public_url("combined_regulations.pdf")
+except Exception:
+    combined_pdf_url = None
+# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+
 st.title("🏥 병원 규정 AI 검색기")
 
 # (전체 화면 모드)
@@ -163,8 +184,6 @@ else:
     col_nav, col_viewer = st.columns([1, 1.5]) 
 
     with col_nav:
-        # [수정] "탐색" 헤더 삭제
-        
         if combined_pdf_url:
             st.button(
                 "📂 [전체 합본 보기]", 
@@ -179,7 +198,6 @@ else:
         search_mode = st.radio("모드", ["[AI] 제목/분류 검색", "[AI] 본문 내용 검색", "제목 검색 (키워드)"])
         search_query = st.text_input("검색어", placeholder="예: 낙상")
         
-        # st.subheader("규정 목록") # (이것도 공간 절약을 위해 제거하거나 유지 가능)
         st.markdown("### 규정 목록")
         
         target_df = map_data
@@ -248,9 +266,6 @@ else:
                                           on_click=set_pdf_url, args=(row['pdf_url'], 1))
 
     with col_viewer:
-        # [수정] "미리보기" 헤더 삭제
-        
-        # [수정] 전체 화면 버튼을 상단으로 이동
         st.button(
             "↗️ 전체 화면으로 보기", 
             on_click=lambda: st.session_state.update(view_mode="fullscreen"), 
