@@ -1,0 +1,6 @@
+streamlit
+pandas
+numpy
+supabase
+httpx
+sentence-transformers
