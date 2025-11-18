@@ -42,7 +42,9 @@ def load_map_data(_supabase: Client):
         ).order("id").execute()
         
         df = pd.DataFrame(response.data)
-        if df.empty: return pd.DataFrame()
+        if df.empty: 
+            st.warning("⚠️ '지도' 데이터가 없습니다. admin_sync.py를 실행했는지 확인하세요.")
+            return pd.DataFrame()
         
         def create_sort_key(std_id_str):
             try:
@@ -53,7 +55,7 @@ def load_map_data(_supabase: Client):
         df['std_sort_key'] = df['std_id'].apply(create_sort_key)
         return df.sort_values(by=['std_sort_key', 'me_id'])
     except Exception as e:
-        st.error(f"데이터 로드 오류: {e}")
+        st.error(f"❌ [오류] '지도' 데이터를 불러오는 중 문제가 발생했습니다: {e}")
         return pd.DataFrame()
 
 # --- 3. 핵심 기능 함수 ---
@@ -73,46 +75,46 @@ def run_ai_search(query_text, search_mode, _supabase, _model):
                 'query_vector': query_vector, 'match_threshold': 0.5, 'match_count': 5
             }).execute()
             return response.data, "chunks"
-    except Exception:
+    except Exception as e:
+        st.error(f"❌ [오류] AI 검색 중 문제가 발생했습니다: {e}")
         return [], None
 
-# ★★★ [핵심 수정] PDF 다운로드 로직 강화 (User-Agent 추가) ★★★
+# ★★★ [핵심] PDF Base64 인코딩 함수 (다운로드 강화) ★★★
 @st.cache_data(ttl=3600)
 def get_pdf_base64(url: str):
-    """ PDF URL을 받아 Base64 문자열로 변환합니다. """
+    """ PDF URL을 받아 Base64 문자열로 변환합니다. (보안 우회) """
     try:
         if url.startswith("http://"): url = url.replace("http://", "https://")
         
-        # [수정] 브라우저인 척 헤더를 추가하여 차단 방지
+        # [중요] 브라우저인 척 헤더를 추가하여 차단 방지
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         
-        response = httpx.get(url, headers=headers, timeout=15.0) # 타임아웃 15초로 연장
+        response = httpx.get(url, headers=headers, timeout=15.0)
         
         if response.status_code == 200:
             return base64.b64encode(response.content).decode('utf-8')
         else:
-            # 실패 시 로그 출력 (관리자용)
-            print(f"PDF Download Failed: {response.status_code} for URL: {url}")
+            st.error(f"❌ PDF 다운로드 실패: HTTP {response.status_code}")
             return None
     except Exception as e:
-        print(f"PDF Error: {e}")
+        st.error(f"❌ PDF 다운로드 오류: {e}")
         return None
 
 def render_native_pdf(pdf_url: str, page: int = 1):
-    """ Base64 주입 방식 뷰어 + 실패 시 직접 링크 제공 """
+    """ 브라우저 자체 PDF 뷰어를 강제로 활성화하는 HTML 생성 """
     if not pdf_url:
-        st.info("좌측 목록에서 규정을 선택하세요.")
+        st.info("규정을 선택하세요.")
         return
 
-    # [안전장치] 뷰어 상단에 항상 원본 링크 버튼 표시 (뷰어가 깨져도 볼 수 있게 함)
+    # [안전장치] 원본 링크 제공
     st.markdown(f"""
     <a href="{pdf_url}" target="_blank" style="
         display: inline-block;
         background-color: #f0f2f6;
         color: #31333F;
-        padding: 8px 12px;
+        padding: 6px 12px;
         border-radius: 4px;
         text-decoration: none;
         font-size: 14px;
@@ -122,15 +124,15 @@ def render_native_pdf(pdf_url: str, page: int = 1):
     </a>
     """, unsafe_allow_html=True)
 
-    with st.spinner("📄 문서를 불러오는 중입니다..."):
+    with st.spinner("📄 PDF 문서를 로딩 중입니다..."):
         base64_pdf = get_pdf_base64(pdf_url)
     
     if base64_pdf:
+        # data URI 방식으로 PDF 데이터 직접 주입
         pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}#page={page}" width="100%" height="1000px" type="application/pdf" style="border:none;"></iframe>'
         st.markdown(pdf_display, unsafe_allow_html=True)
     else:
-        st.error("❌ 문서를 미리보기로 불러오지 못했습니다.")
-        st.caption("위의 '새 창에서 PDF 원본 열기' 버튼을 이용해주세요.")
+        st.warning("⚠️ PDF 데이터를 불러올 수 없습니다. 위의 '새 창에서 열기' 버튼을 사용해주세요.")
 
 def set_pdf_url(url: str, page: int):
     st.session_state.current_pdf_url = url
@@ -191,26 +193,57 @@ else:
             if "[AI]" in search_mode:
                 with st.spinner(st.session_state.ai_status if st.session_state.ai_status else "AI 검색 중..."):
                     ai_results, ai_result_type = run_ai_search(search_query, search_mode, supabase, ai_model)
-                    if ai_results:
+                    
+                    if not ai_results:
+                        st.info("ℹ️ 결과가 없습니다.")
+                        target_df = pd.DataFrame() # 결과 없음 처리
+                    else:
                         if ai_result_type == "map":
+                             # 지도 검색이면 아코디언 필터링을 위해 target_df 갱신
                              ids = [r['id'] for r in ai_results]
                              target_df = map_data[map_data['id'].isin(ids)]
+                        
                         elif ai_result_type == "chunks":
-                            url_map = map_data.drop_duplicates('pdf_filename').set_index('pdf_filename')['pdf_url'].to_dict()
+                            # ★★★ [개선된 UI] 본문 검색 결과 카드형 리스트 ★★★
+                            st.markdown(f"##### 🔍 '{search_query}' 관련 본문 검색 결과 ({len(ai_results)}건)")
+                            
+                            url_map = map_data.drop_duplicates(subset=['pdf_filename'])
+                            url_map = pd.Series(url_map.pdf_url.values, index=url_map.pdf_filename).to_dict()
+
                             for row in ai_results:
                                 with st.container(border=True):
-                                    st.caption(f"유사도: {row['similarity']:.0%}")
-                                    chunk = row['context_chunk'].split("[본문]")[-1] if "[본문]" in row['context_chunk'] else row['context_chunk']
-                                    st.markdown(f"...{chunk[:100]}...")
+                                    # [헤더] 파일명 + 점수
+                                    c1, c2 = st.columns([4, 1])
+                                    c1.markdown(f"**📄 {row['pdf_filename']}** (p.{row['page_num']})")
+                                    
+                                    score = row['similarity']
+                                    color = "green" if score >= 0.6 else "orange" if score >= 0.5 else "gray"
+                                    c2.markdown(f":{color}[**{score:.0%}**]")
+                                    
+                                    # [본문 내용 가공]
+                                    raw_text = row['context_chunk']
+                                    clean_text = raw_text.replace("[본문]", "").strip()
+                                    if clean_text.startswith("...Ÿ"): clean_text = clean_text.replace("...Ÿ", "...")
+                                    
+                                    # 검색어 하이라이트
+                                    if search_query:
+                                        clean_text = clean_text.replace(search_query, f":red[**{search_query}**]")
+                                    
+                                    st.markdown(f"...{clean_text}...")
+                                    
+                                    # [버튼]
                                     pdf_url = url_map.get(row['pdf_filename'])
                                     if pdf_url:
-                                        st.button(f"📄 {row['pdf_filename']} (p.{row['page_num']})", 
-                                                  key=f"c_{row['id']}", 
-                                                  on_click=set_pdf_url, args=(pdf_url, row['page_num']))
-                            target_df = pd.DataFrame() # 아코디언 숨김
-                    else:
-                        st.info("ℹ️ AI 검색 결과가 없습니다.")
-                        target_df = pd.DataFrame()
+                                        st.button(
+                                            "👉 이 페이지 바로 보기",
+                                            key=f"btn_chunk_{row['id']}",
+                                            on_click=set_pdf_url,
+                                            args=(pdf_url, row['page_num']),
+                                            use_container_width=True
+                                        )
+                            
+                            # 본문 검색 시에는 아코디언을 그리지 않음
+                            target_df = pd.DataFrame()
 
             elif "키워드" in search_mode:
                 q = search_query.lower()
@@ -219,16 +252,16 @@ else:
                                      map_data['me_name'].str.lower().str.contains(q)]
                 if target_df.empty: st.info("결과가 없습니다.")
 
-        # (아코디언 렌더링 - 수정됨)
+        # (아코디언 렌더링)
         if not target_df.empty:
-            # ★ [핵심 수정] 검색어가 있으면 펼치고(True), 없으면 모두 닫음(False)
+            # ★ [수정] 검색어가 있을 때만(True), 없으면 모두 닫음(False)
             should_expand = True if search_query else False
             
             for ch_name, ch_df in target_df.groupby('ch_name', sort=False):
                 with st.expander(f"📂 {ch_name}", expanded=should_expand):
                     for std_name, std_df in ch_df.groupby('std_name', sort=False):
                         std_id = std_df.iloc[0]['std_id']
-                        # 내부는 항상 닫아두거나, 검색 시에만 엶
+                        # 내부는 항상 닫아둠 (너무 길어지는 것 방지) or 검색 시 염
                         with st.expander(f"📙 {std_id} {std_name}", expanded=should_expand):
                             for _, row in std_df.iterrows():
                                 st.button(f"📄 {row['me_name']}", key=f"btn_{row['id']}", 
@@ -248,3 +281,19 @@ else:
             width='stretch',
             disabled=(st.session_state.current_pdf_url is None)
         )
+
+# --- 관리자 패널 ---
+if 'is_admin' not in st.session_state: st.session_state.is_admin = False
+st.sidebar.title("관리자 패널")
+if st.session_state.is_admin:
+    st.sidebar.success("관리자 모드 활성화")
+    st.sidebar.markdown("---")
+    st.sidebar.dataframe(map_data.head())
+else:
+    admin_pw = st.sidebar.text_input("관리자 암호:", type="password")
+    if admin_pw:
+        if admin_pw == st.secrets["app_security"]["admin_password"]:
+            st.session_state.is_admin = True
+            st.rerun()
+        else:
+            st.sidebar.error("암호가 틀렸습니다.")
