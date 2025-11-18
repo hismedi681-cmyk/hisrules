@@ -102,14 +102,15 @@ def get_pdf_bytes(url: str):
         return None
 
 
-# ★★★ [NEW] 최종 안정화 뷰어 함수: 듀얼 모드 (전체/맥락) + 클린 UI ★★★
+# ★★★ [NEW] 최종 안정화 뷰어 함수: 듀얼 모드 (전체/맥락) ★★★
 def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
     """ 
-    [듀얼 모드] target_page에 따라 로드 방식을 결정합니다. (안내 메시지 모두 제거)
+    [듀얼 모드] target_page에 따라 로드 방식을 결정합니다. 
     - page=1: 전체 로드 (Full Scroll Mode)
     - page>1: 맥락 창 로드 (Context Window Mode)
     """
-    target_page = int(page)
+    # ★ 타입 에러 방지: 페이지 번호를 확실하게 Python 표준 int로 변환
+    target_page = int(page) 
     
     if not pdf_url:
         st.info("규정을 선택하세요.")
@@ -121,15 +122,13 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
         pages_to_load = None 
         spinner_text = "📄 전체 문서를 로딩 중..."
     else:
-        # AI 검색 결과 클릭 시: 맥락 창 로드 (안정성 확보)
-        context_range = 20 # 앞뒤 20페이지
+        # AI 검색 결과 클릭 시: 맥락 창 로드 (±20 페이지)
+        context_range = 20 
         start = max(1, target_page - context_range)
         end = target_page + context_range
         pages_to_load = list(range(start, end + 1))
         spinner_text = "📄 AI 검색 문맥 창을 로딩 중..."
 
-    # --- 안내 메시지 모두 제거 (깔끔한 UI) ---
-    
     # 2. PDF 렌더링
     with st.spinner(spinner_text):
         pdf_data = get_pdf_bytes(pdf_url)
@@ -142,7 +141,7 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
             pages_to_render=pages_to_load # None 또는 계산된 페이지 리스트 사용
         )
     else:
-        st.error("❌ PDF 문서를 로딩할 수 없습니다. 파일이 크면 로딩에 실패할 수 있습니다.")
+        st.error("❌ PDF 문서를 로딩할 수 없습니다.")
 
 
 def set_pdf_url(url: str, page: int):
@@ -289,7 +288,7 @@ else:
         st.divider()
 
         if st.session_state.current_pdf_url:
-            # ★★★ 함수 호출 변경
+            # ★★★ 함수 호출
             render_pdf_viewer_mode(st.session_state.current_pdf_url, st.session_state.current_pdf_page)
         else:
             st.info("왼쪽에서 규정을 선택하세요.")
