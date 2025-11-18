@@ -102,41 +102,46 @@ def get_pdf_bytes(url: str):
         return None
 
 
-# ★★★ [NEW] JavaScript 스크롤 헬퍼 함수 정의 (픽셀 점프) ★★★
+# ★★★ JavaScript 스크롤 헬퍼 함수 정의 (픽셀 점프 및 재시도 로직 강화) ★★★
 def js_scroll_to_page_relative(scroll_index):
     """ PDF 뷰어의 내부 스크롤 컨테이너를 찾아서 상대적 인덱스 위치로 이동시키는 JS 코드를 삽입합니다. """
     
     js_code = f"""
     <script>
+        let attempts = 0;
+        const maxAttempts = 15; // 최대 1.5초까지 재시도
+        
         function attemptScroll() {{
             const viewer = document.querySelector('.streamlit-container .st-emotion-base:last-child');
             
             if (viewer) {{
                 const scrollableContainer = viewer.querySelector('.react-pdf__Document'); 
-                const firstPage = viewer.querySelector('.react-pdf__Page'); // 첫 번째 페이지 요소를 찾습니다.
+                const firstPage = viewer.querySelector('.react-pdf__Page'); 
 
                 if (scrollableContainer && firstPage) {{
-                    const pageHeight = firstPage.offsetHeight; // 첫 페이지의 픽셀 높이를 측정합니다.
-                    // 스크롤 위치 = 인덱스 * 측정된 높이
+                    const pageHeight = firstPage.offsetHeight;
                     const scrollAmount = {scroll_index} * pageHeight;
                     
                     scrollableContainer.scrollTop = scrollAmount;
-                    console.log('PDF Scrolled to index: {scroll_index}, Height: ' + pageHeight);
-                }} else {{
-                    // 컨테이너/페이지가 아직 로드되지 않았으면 0.1초 뒤에 재시도
+                    console.log('PDF Scrolled successfully to index: {scroll_index}');
+                }} else if (attempts < maxAttempts) {{
+                    attempts++;
+                    // 재시도 (100ms 간격)
                     setTimeout(attemptScroll, 100); 
+                }} else {{
+                    console.error('PDF page element not found after {{maxAttempts}} attempts.');
                 }}
             }}
         }}
 
-        // 페이지가 로드된 후 스크롤 시도 (0.5초 대기)
-        setTimeout(attemptScroll, 500); 
+        // 페이지가 로드된 후 스크롤 시도
+        attemptScroll(); 
     </script>
     """
     st.markdown(js_code, unsafe_allow_html=True)
 
 
-# ★★★ [NEW] 최종 안정화 뷰어 함수: 듀얼 모드 (전체/맥락) ★★★
+# ★★★ 최종 안정화 뷰어 함수: 듀얼 모드 (전체/맥락) ★★★
 def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
     """ 
     [듀얼 모드] target_page에 따라 로드 방식을 결정하고, AI 검색 시 픽셀 점프를 시도합니다.
@@ -151,9 +156,9 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
     # 2. 로딩 모드 결정 및 페이지 계산
     if target_page == 1:
         # 일반 규정 목록 또는 합본 PDF 클릭 시: 전체 로드 시도
-        pages_to_load = [] # 빈 리스트는 전체 로드 효과를 냅니다.
+        pages_to_load = [] 
         spinner_text = "📄 전체 문서를 로딩 중..."
-        jump_index = 0 # 점프 불필요
+        jump_needed = False
     else:
         # AI 검색 결과 클릭 시: 맥락 창 로드 (±20 페이지)
         context_range = 20 
@@ -162,10 +167,10 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
         
         pages_to_load = list(range(start, end + 1))
         
-        # ★★★ 점프 인덱스 계산: 타겟 페이지가 로드된 페이지 리스트 내에서 몇 번째 인덱스인지 계산 ★★★
-        # (예: start=30, target_page=50. 인덱스 = 50 - 30 = 20)
+        # 타겟 페이지가 로드된 페이지 리스트 내에서 몇 번째 인덱스인지 계산
         jump_index = target_page - start
         spinner_text = f"📄 AI 검색 문맥 창 ({start}p ~ {end}p) 로딩 및 {target_page}p로 점프 중..."
+        jump_needed = True
 
     # 3. PDF 렌더링
     with st.spinner(spinner_text):
@@ -180,7 +185,7 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
         )
         
         # 4. 렌더링 성공 후, AI 검색 모드일 때만 JS 스크롤 실행
-        if target_page > 1 and jump_index > 0:
+        if jump_needed and jump_index > 0:
             js_scroll_to_page_relative(jump_index)
             
     else:
@@ -275,6 +280,9 @@ else:
                             url_map = map_data.drop_duplicates(subset=['pdf_filename'])
                             url_map = pd.Series(url_map.pdf_url.values, index=url_map.pdf_filename).to_dict()
 
+                            # ★★★ 메타데이터 제거를 위한 키워드 리스트
+                            keywords_to_remove = ['[섹션:', '[하위섹션:', '[규칙:', '[행위:', '[대상:'] 
+
                             for row in ai_results:
                                 with st.container(border=True):
                                     c1, c2 = st.columns([4, 1])
@@ -284,8 +292,14 @@ else:
                                     c2.markdown(f":{color}[**{score:.0%}**]")
                                     
                                     raw_text = row['context_chunk']
+                                    
+                                    # ★★★ 메타데이터 제거 로직 적용 ★★★
+                                    for keyword in keywords_to_remove:
+                                        raw_text = re.sub(f'{re.escape(keyword)}[^\]]*\]', '', raw_text)
+                                        
                                     clean_text = raw_text.replace("[본문]", "").strip()
                                     if clean_text.startswith("...Ÿ"): clean_text = clean_text.replace("...Ÿ", "...")
+                                    
                                     if search_query:
                                         clean_text = clean_text.replace(search_query, f":red[**{search_query}**]")
                                     st.markdown(f"...{clean_text}...")
@@ -351,6 +365,7 @@ else:
             st.rerun()
         else:
             st.sidebar.error("암호가 틀렸습니다.")
+
 
 
 
