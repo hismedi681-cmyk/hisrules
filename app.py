@@ -102,10 +102,10 @@ def get_pdf_bytes(url: str):
         return None
 
 
-# ★★★ [NEW] 최종 안정화 뷰어 함수: 모드 전환 (전체/맥락) ★★★
+# ★★★ [NEW] 최종 안정화 뷰어 함수: 듀얼 모드 (전체/맥락) + 클린 UI ★★★
 def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
     """ 
-    [모드 전환] target_page에 따라 로드 방식을 결정합니다.
+    [듀얼 모드] target_page에 따라 로드 방식을 결정합니다. (안내 메시지 모두 제거)
     - page=1: 전체 로드 (Full Scroll Mode)
     - page>1: 맥락 창 로드 (Context Window Mode)
     """
@@ -117,26 +117,21 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
 
     # 1. 로딩 모드 결정 및 페이지 계산
     if target_page == 1:
-        # 전체 로드 모드: 목록 클릭, 합본 클릭 시 (1페이지부터 시작)
+        # 일반 규정 목록 또는 합본 PDF 클릭 시: 전체 로드 시도
         pages_to_load = None 
-        mode_info_text = "전체 문서가 로드되었습니다. 자유롭게 스크롤하세요."
-        mode_style = "info"
+        spinner_text = "📄 전체 문서를 로딩 중..."
     else:
-        # 맥락 창 모드: AI 검색 결과 클릭 시
-        context_range = 20 # 앞뒤 20페이지로 변경
+        # AI 검색 결과 클릭 시: 맥락 창 로드 (안정성 확보)
+        context_range = 20 # 앞뒤 20페이지
         start = max(1, target_page - context_range)
         end = target_page + context_range
         pages_to_load = list(range(start, end + 1))
-        mode_info_text = f"AI 검색 결과 문맥 창 ({start}p ~ {end}p)이 로드되었습니다."
-        mode_style = "warning"
+        spinner_text = "📄 AI 검색 문맥 창을 로딩 중..."
 
-
-    # 2. 로딩 안내 메시지 (메시지 내용을 간결하게 변경)
-    st.markdown(f"**ℹ️ {mode_info_text}**")
-    st.markdown("---")
+    # --- 안내 메시지 모두 제거 (깔끔한 UI) ---
     
-    # 3. PDF 렌더링
-    with st.spinner(f"📄 PDF 문서를 로딩 중..."):
+    # 2. PDF 렌더링
+    with st.spinner(spinner_text):
         pdf_data = get_pdf_bytes(pdf_url)
     
     if pdf_data:
@@ -147,7 +142,7 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
             pages_to_render=pages_to_load # None 또는 계산된 페이지 리스트 사용
         )
     else:
-        st.error("❌ PDF 문서를 로딩할 수 없습니다.")
+        st.error("❌ PDF 문서를 로딩할 수 없습니다. 파일이 크면 로딩에 실패할 수 있습니다.")
 
 
 def set_pdf_url(url: str, page: int):
@@ -195,7 +190,6 @@ st.title("🏥 병원 규정 AI 검색기")
 if st.session_state.view_mode == "fullscreen":
     st.button("🔙 목록 보기", on_click=lambda: st.session_state.update(view_mode="preview"), width='stretch')
     if st.session_state.current_pdf_url:
-        # ★★★ 함수 호출 변경
         render_pdf_viewer_mode(st.session_state.current_pdf_url, st.session_state.current_pdf_page)
 
 # (분할 화면 모드)
