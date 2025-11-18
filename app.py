@@ -2,12 +2,12 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import re
-# Base64 import는 더 이상 필요 없습니다.
 from supabase import create_client, Client, ClientOptions
 from httpx import Timeout
 import httpx 
 from sentence_transformers import SentenceTransformer
-# streamlit_pdf_viewer import는 더 이상 필요 없습니다.
+# ★ Canvas 뷰어 라이브러리 (필수)
+from streamlit_pdf_viewer import pdf_viewer 
 
 # --- 1. 페이지 설정 ---
 st.set_page_config(
@@ -81,57 +81,105 @@ def run_ai_search(query_text, search_mode, _supabase, _model):
         st.error(f"❌ [오류] AI 검색 중 문제가 발생했습니다: {e}")
         return [], None
 
-# --- PDF 뷰어 함수 (대안 1) ---
+@st.cache_data(ttl=3600)
+def get_pdf_bytes(url: str):
+    """ PDF URL을 받아 바이너리(bytes) 데이터로 반환합니다. """
+    try:
+        if url.startswith("http://"): url = url.replace("http://", "https://")
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        
+        response = httpx.get(url, headers=headers, timeout=15.0)
+        
+        if response.status_code == 200:
+            return response.content
+        else:
+            st.error(f"❌ PDF 다운로드 실패: HTTP {response.status_code}")
+            return None
+    except Exception as e:
+        st.error(f"❌ PDF 다운로드 오류: {e}")
+        return None
 
-# get_pdf_bytes 함수는 더 이상 사용하지 않습니다.
+# ★★★ [NEW] JavaScript 스크롤 헬퍼 함수 정의 ★★★
+def js_scroll_to_page(page_num):
+    """ PDF 뷰어의 내부 스크롤 컨테이너를 찾아서 지정된 페이지로 이동시키는 JS 코드를 삽입합니다. """
+    
+    # 캔버스 뷰어는 페이지당 약 900px 높이(Streamlit 기본 설정)를 가집니다.
+    scroll_amount = (page_num - 1) * 900 
+    
+    js_code = f"""
+    <script>
+        function attemptScroll() {{
+            // PDF 뷰어의 최상위 컨테이너를 찾습니다.
+            const viewer = document.querySelector('.streamlit-container .st-emotion-base:last-child');
+            
+            if (viewer) {{
+                // 내부 스크롤 가능한 컨테이너 (PDF.js의 뷰포트)를 찾습니다.
+                // 이 클래스 이름은 Streamlit/Component 버전에 따라 변경될 수 있습니다.
+                const scrollableContainer = viewer.querySelector('.react-pdf__Document'); 
 
-def render_pdf_with_anchor_jump(pdf_url: str, page: int = 1):
-    """ 
-    [대안 1] Native Browser 뷰어 (URL #Anchor) 사용
-    - 스크롤 자유 + 자동 점프 기능 구현
+                if (scrollableContainer) {{
+                    scrollableContainer.scrollTop = {scroll_amount};
+                    console.log('PDF Scrolled to page: {page_num}');
+                }} else {{
+                    // 내부 컨테이너를 못 찾으면 0.1초 뒤에 재시도
+                    setTimeout(attemptScroll, 100); 
+                }}
+            }}
+        }}
+
+        // 페이지가 로드된 후 스크롤 시도 (0.5초 대기)
+        setTimeout(attemptScroll, 500); 
+    </script>
     """
+    st.markdown(js_code, unsafe_allow_html=True)
+
+
+# ★★★ [NEW] 자동 점프 뷰어 함수 (JS 사용) ★★★
+def render_pdf_with_js_jump(pdf_url: str, page: int = 1):
+    """ 
+    [JS 점프 모드]
+    - 전체 문서를 로드 (스크롤 가능)하고, JS를 사용하여 스크롤 위치를 타겟 페이지로 이동
+    """
+    target_page = int(page)
+    
     if not pdf_url:
         st.info("규정을 선택하세요.")
         return
 
-    target_page = int(page)
+    # 안내 메시지 (전체 로딩)
+    st.info(f"✅ 규정 전체가 로드되었습니다. **{target_page}페이지**로 자동 점프합니다.")
+    st.markdown("---")
     
-    st.markdown(f"**📍 AI가 찾은 페이지:** {target_page} 페이지 (스크롤하여 전체 문맥을 확인하세요)")
+    # 1. PDF 렌더링 (전체 스크롤 가능)
+    with st.spinner("📄 전체 문서를 로딩 중..."):
+        pdf_data = get_pdf_bytes(pdf_url)
     
-    # [안전장치] 원본 링크 제공
-    st.markdown(f"""
-    <a href="{pdf_url}#page={target_page}" target="_blank" style="
-        display: inline-block;
-        background-color: #f0f2f6;
-        color: #31333F;
-        padding: 6px 12px;
-        border-radius: 4px;
-        text-decoration: none;
-        font-size: 14px;
-        margin-bottom: 10px;
-        border: 1px solid #d6d6d8;">
-        ↗️ 새 창에서 PDF 원본 열기 (자동 점프 포함)
-    </a>
-    """, unsafe_allow_html=True)
-    
-    st.divider()
+    if pdf_data:
+        pdf_viewer(
+            input=pdf_data, 
+            width=700, 
+            height=1000,
+            # pages_to_render 옵션을 제거하여 전체 문서 로딩
+        )
+        # 2. JS 스크립트 삽입 및 실행
+        if target_page > 1:
+            js_scroll_to_page(target_page)
+    else:
+        st.error("❌ PDF 문서를 로딩할 수 없습니다.")
 
-    # ★ 핵심 수정: iframe으로 URL을 직접 로드하고, #page=을 붙여 점프 기능 활성화
-    st.markdown(f"""
-    <iframe src="{pdf_url}#page={target_page}" 
-            width="100%" 
-            height="1000px" 
-            type="application/pdf" 
-            style="border:none;">
-    </iframe>
-    """, unsafe_allow_html=True)
 
 def set_pdf_url(url: str, page: int):
     st.session_state.current_pdf_url = url
     st.session_state.current_pdf_page = page
     st.session_state.view_mode = "preview" 
+    # 이전 상태 변수 제거 (JS 모드로 통합)
+    if "pdf_view_state" in st.session_state:
+        del st.session_state.pdf_view_state
 
-# --- 4. UI 구성 ---
+# --- 4. UI 구성 (메인 루프) ---
 
 # (보안 체크)
 def check_password():
@@ -146,6 +194,9 @@ if "is_authenticated" not in st.session_state: st.session_state.is_authenticated
 if "view_mode" not in st.session_state: st.session_state.view_mode = "preview"
 if "current_pdf_url" not in st.session_state: st.session_state.current_pdf_url = None
 if "current_pdf_page" not in st.session_state: st.session_state.current_pdf_page = 1
+# 이전 상태 변수 초기화
+if "pdf_view_state" in st.session_state:
+    del st.session_state.pdf_view_state
 if "ai_status" not in st.session_state: st.session_state.ai_status = ""
 
 if not st.session_state.is_authenticated:
@@ -171,7 +222,7 @@ st.title("🏥 병원 규정 AI 검색기")
 if st.session_state.view_mode == "fullscreen":
     st.button("🔙 목록 보기", on_click=lambda: st.session_state.update(view_mode="preview"), width='stretch')
     if st.session_state.current_pdf_url:
-        render_pdf_with_anchor_jump(st.session_state.current_pdf_url, st.session_state.current_pdf_page)
+        render_pdf_with_js_jump(st.session_state.current_pdf_url, st.session_state.current_pdf_page)
 
 # (분할 화면 모드)
 else:
@@ -270,8 +321,8 @@ else:
         st.divider()
 
         if st.session_state.current_pdf_url:
-            # ★★★ 핵심 변경: 대안 1 함수 호출 ★★★
-            render_pdf_with_anchor_jump(st.session_state.current_pdf_url, st.session_state.current_pdf_page)
+            # ★★★ 함수 호출 변경
+            render_pdf_with_js_jump(st.session_state.current_pdf_url, st.session_state.current_pdf_page)
         else:
             st.info("왼쪽에서 규정을 선택하세요.")
 
@@ -290,6 +341,3 @@ else:
             st.rerun()
         else:
             st.sidebar.error("암호가 틀렸습니다.")
-
-
-
