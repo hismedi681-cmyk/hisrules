@@ -102,14 +102,46 @@ def get_pdf_bytes(url: str):
         return None
 
 
+# ★★★ [NEW] JavaScript 스크롤 헬퍼 함수 정의 (픽셀 점프) ★★★
+def js_scroll_to_page_relative(scroll_index):
+    """ PDF 뷰어의 내부 스크롤 컨테이너를 찾아서 상대적 인덱스 위치로 이동시키는 JS 코드를 삽입합니다. """
+    
+    js_code = f"""
+    <script>
+        function attemptScroll() {{
+            const viewer = document.querySelector('.streamlit-container .st-emotion-base:last-child');
+            
+            if (viewer) {{
+                const scrollableContainer = viewer.querySelector('.react-pdf__Document'); 
+                const firstPage = viewer.querySelector('.react-pdf__Page'); // 첫 번째 페이지 요소를 찾습니다.
+
+                if (scrollableContainer && firstPage) {{
+                    const pageHeight = firstPage.offsetHeight; // 첫 페이지의 픽셀 높이를 측정합니다.
+                    // 스크롤 위치 = 인덱스 * 측정된 높이
+                    const scrollAmount = {scroll_index} * pageHeight;
+                    
+                    scrollableContainer.scrollTop = scrollAmount;
+                    console.log('PDF Scrolled to index: {scroll_index}, Height: ' + pageHeight);
+                }} else {{
+                    // 컨테이너/페이지가 아직 로드되지 않았으면 0.1초 뒤에 재시도
+                    setTimeout(attemptScroll, 100); 
+                }}
+            }}
+        }}
+
+        // 페이지가 로드된 후 스크롤 시도 (0.5초 대기)
+        setTimeout(attemptScroll, 500); 
+    </script>
+    """
+    st.markdown(js_code, unsafe_allow_html=True)
+
+
 # ★★★ [NEW] 최종 안정화 뷰어 함수: 듀얼 모드 (전체/맥락) ★★★
 def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
     """ 
-    [듀얼 모드] target_page에 따라 로드 방식을 결정합니다. 
-    - page=1: 전체 로드 (Full Scroll Mode)
-    - page>1: 맥락 창 로드 (Context Window Mode: ±20 pages)
+    [듀얼 모드] target_page에 따라 로드 방식을 결정하고, AI 검색 시 픽셀 점프를 시도합니다.
     """
-    # 1. 입력 페이지 번호를 확실하게 int로 변환
+    # 1. 입력 페이지 번호를 확실하게 int로 변환 (TypeError 방지)
     target_page = int(page) 
     
     if not pdf_url:
@@ -121,16 +153,19 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
         # 일반 규정 목록 또는 합본 PDF 클릭 시: 전체 로드 시도
         pages_to_load = [] # 빈 리스트는 전체 로드 효과를 냅니다.
         spinner_text = "📄 전체 문서를 로딩 중..."
+        jump_index = 0 # 점프 불필요
     else:
-        # ★★★ AI 검색 결과 클릭 시: 맥락 창 로드 (±20 페이지) ★★★
-        context_range = 20 # 앞뒤 20페이지
-        
-        # start와 end를 계산 후 명시적으로 int()로 변환 (타입 안정성 확보)
+        # AI 검색 결과 클릭 시: 맥락 창 로드 (±20 페이지)
+        context_range = 20 
         start = int(max(1, target_page - context_range))
         end = int(target_page + context_range)
         
         pages_to_load = list(range(start, end + 1))
-        spinner_text = f"📄 AI 검색 문맥 창 ({start}p ~ {end}p)을 로딩 중..."
+        
+        # ★★★ 점프 인덱스 계산: 타겟 페이지가 로드된 페이지 리스트 내에서 몇 번째 인덱스인지 계산 ★★★
+        # (예: start=30, target_page=50. 인덱스 = 50 - 30 = 20)
+        jump_index = target_page - start
+        spinner_text = f"📄 AI 검색 문맥 창 ({start}p ~ {end}p) 로딩 및 {target_page}p로 점프 중..."
 
     # 3. PDF 렌더링
     with st.spinner(spinner_text):
@@ -141,10 +176,16 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
             input=pdf_data, 
             width=700, 
             height=1000,
-            pages_to_render=pages_to_load # [] 또는 계산된 페이지 리스트 사용
+            pages_to_render=pages_to_load
         )
+        
+        # 4. 렌더링 성공 후, AI 검색 모드일 때만 JS 스크롤 실행
+        if target_page > 1 and jump_index > 0:
+            js_scroll_to_page_relative(jump_index)
+            
     else:
         st.error("❌ PDF 문서를 로딩할 수 없습니다.")
+
 
 def set_pdf_url(url: str, page: int):
     st.session_state.current_pdf_url = url
