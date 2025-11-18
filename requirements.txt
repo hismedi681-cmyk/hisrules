@@ -4,3 +4,4 @@ numpy
 supabase
 httpx
 sentence-transformers
+streamlit-pdf-viewer
