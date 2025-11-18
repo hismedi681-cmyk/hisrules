@@ -103,32 +103,27 @@ def get_pdf_bytes(url: str):
         st.error(f"❌ PDF 다운로드 오류: {e}")
         return None
 
-# ★ [핵심 수정 3] pdf_viewer 컴포넌트 사용
+# ★ [수정됨] render_native_pdf 함수
 def render_native_pdf(pdf_url: str, page: int = 1):
     """ streamlit-pdf-viewer를 사용한 고화질 렌더링 """
     if not pdf_url:
         st.info("규정을 선택하세요.")
         return
 
-    # 요청하신대로 '새 창에서 원본 열기' 버튼은 제거했습니다.
-
     with st.spinner("📄 고화질 문서를 로딩 중입니다..."):
         pdf_data = get_pdf_bytes(pdf_url)
     
     if pdf_data:
-        # width는 css width, height는 뷰어의 높이. 
-        # resolution_boost를 높이면 화질이 좋아지지만 느려질 수 있습니다. 기본값도 벡터라 충분히 선명합니다.
+        # ★ [핵심 수정] page 변수가 float(1.0)이나 str일 수 있으므로 int로 강제 변환
+        target_page = int(page) 
+        
         pdf_viewer(
             input=pdf_data, 
             width=700, 
             height=1000, 
-            pages_to_render=[page] if page > 1 else None, # 특정 페이지만 볼지 전체 볼지(여기선 전체 스크롤 가능하게 None 추천하나 페이지 지정시 리스트)
-            # 만약 특정 페이지로 바로 이동하고 싶다면 pages_to_render=[page] 보다는 
-            # 뷰어 자체의 기능 제한이 있으므로, 사용자가 스크롤하게 두는 것이 가장 안정적입니다.
-            # 다만, 질문자님의 의도가 '해당 페이지'를 보는 것이므로 아래와 같이 처리합니다.
+            # target_page가 1보다 클 때만 해당 페이지만 렌더링, 1이면 전체(None) 렌더링
+            pages_to_render=[target_page] if target_page > 1 else None 
         )
-        # *참고: pdf_viewer는 현재 특정 페이지 '점프' 기능보다는 렌더링할 페이지를 지정하는 방식이 주류입니다.
-        # 전체 문서를 다 보고 싶다면 pages_to_render 옵션을 빼세요.
     else:
         st.warning("⚠️ PDF 데이터를 불러올 수 없습니다.")
 
@@ -300,3 +295,4 @@ else:
             st.rerun()
         else:
             st.sidebar.error("암호가 틀렸습니다.")
+
