@@ -6,7 +6,6 @@ from supabase import create_client, Client, ClientOptions
 from httpx import Timeout
 import httpx 
 from sentence_transformers import SentenceTransformer
-# ★ Canvas 뷰어 라이브러리 (필수)
 from streamlit_pdf_viewer import pdf_viewer 
 
 # --- 1. 페이지 설정 ---
@@ -18,6 +17,8 @@ st.set_page_config(
 )
 
 # --- 2. Supabase 및 AI 모델 연결 ---
+# (생략: 기존 코드와 동일)
+
 @st.cache_resource
 def init_connections():
     try:
@@ -102,59 +103,44 @@ def get_pdf_bytes(url: str):
         st.error(f"❌ PDF 다운로드 오류: {e}")
         return None
 
-# ★★★ [NEW] JavaScript 스크롤 헬퍼 함수 정의 ★★★
-def js_scroll_to_page(page_num):
-    """ PDF 뷰어의 내부 스크롤 컨테이너를 찾아서 지정된 페이지로 이동시키는 JS 코드를 삽입합니다. """
-    
-    # 캔버스 뷰어는 페이지당 약 900px 높이(Streamlit 기본 설정)를 가집니다.
-    scroll_amount = (page_num - 1) * 900 
-    
-    js_code = f"""
-    <script>
-        function attemptScroll() {{
-            // PDF 뷰어의 최상위 컨테이너를 찾습니다.
-            const viewer = document.querySelector('.streamlit-container .st-emotion-base:last-child');
-            
-            if (viewer) {{
-                // 내부 스크롤 가능한 컨테이너 (PDF.js의 뷰포트)를 찾습니다.
-                // 이 클래스 이름은 Streamlit/Component 버전에 따라 변경될 수 있습니다.
-                const scrollableContainer = viewer.querySelector('.react-pdf__Document'); 
 
-                if (scrollableContainer) {{
-                    scrollableContainer.scrollTop = {scroll_amount};
-                    console.log('PDF Scrolled to page: {page_num}');
-                }} else {{
-                    // 내부 컨테이너를 못 찾으면 0.1초 뒤에 재시도
-                    setTimeout(attemptScroll, 100); 
-                }}
-            }}
-        }}
-
-        // 페이지가 로드된 후 스크롤 시도 (0.5초 대기)
-        setTimeout(attemptScroll, 500); 
-    </script>
-    """
-    st.markdown(js_code, unsafe_allow_html=True)
-
-
-# ★★★ [NEW] 자동 점프 뷰어 함수 (JS 사용) ★★★
-def render_pdf_with_js_jump(pdf_url: str, page: int = 1):
+# ★★★ [NEW] 최종 안정화 뷰어 함수: 맥락 창 렌더링 (±10 페이지) ★★★
+def render_pdf_context_window(pdf_url: str, page: int = 1):
     """ 
-    [JS 점프 모드]
-    - 전체 문서를 로드 (스크롤 가능)하고, JS를 사용하여 스크롤 위치를 타겟 페이지로 이동
+    [맥락 창 모드]
+    - 타겟 페이지를 중심으로 앞뒤 10 페이지(총 21페이지)만 로드하여 안정성과 문맥을 확보합니다.
     """
     target_page = int(page)
+    context_range = 10 # 앞뒤 10페이지
     
     if not pdf_url:
         st.info("규정을 선택하세요.")
         return
 
-    # 안내 메시지 (전체 로딩)
-    st.info(f"✅ 규정 전체가 로드되었습니다. **{target_page}페이지**로 자동 점프합니다.")
+    # 로드할 페이지의 시작점과 끝점을 계산 (1페이지 미만으로 내려가지 않도록 처리)
+    start = max(1, target_page - context_range)
+    end = target_page + context_range
+    pages_to_load = list(range(start, end + 1)) 
+
+    # 안내 메시지 (자동 점프 및 전체 로드 메시지 제거, 핵심 정보만 표시)
+    st.markdown(f"""
+        <div style='
+            background-color: #e0f7fa; /* 하늘색 배경 */
+            padding: 10px; 
+            border-radius: 5px; 
+            text-align: center;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #00838f; /* 청록색 텍스트 */
+        '>
+            ⬇️ AI 검색 결과 **p. {target_page}** 주변 **({start}p ~ {end}p)** 문맥을 확인하세요.
+        </div>
+    """, unsafe_allow_html=True)
     st.markdown("---")
     
-    # 1. PDF 렌더링 (전체 스크롤 가능)
-    with st.spinner("📄 전체 문서를 로딩 중..."):
+    # PDF 렌더링
+    with st.spinner("📄 PDF 문맥을 로딩 중... (안정화 모드)"):
         pdf_data = get_pdf_bytes(pdf_url)
     
     if pdf_data:
@@ -162,11 +148,8 @@ def render_pdf_with_js_jump(pdf_url: str, page: int = 1):
             input=pdf_data, 
             width=700, 
             height=1000,
-            # pages_to_render 옵션을 제거하여 전체 문서 로딩
+            pages_to_render=pages_to_load # 계산된 21페이지 리스트만 로드
         )
-        # 2. JS 스크립트 삽입 및 실행
-        if target_page > 1:
-            js_scroll_to_page(target_page)
     else:
         st.error("❌ PDF 문서를 로딩할 수 없습니다.")
 
@@ -175,7 +158,6 @@ def set_pdf_url(url: str, page: int):
     st.session_state.current_pdf_url = url
     st.session_state.current_pdf_page = page
     st.session_state.view_mode = "preview" 
-    # 이전 상태 변수 제거 (JS 모드로 통합)
     if "pdf_view_state" in st.session_state:
         del st.session_state.pdf_view_state
 
@@ -194,7 +176,6 @@ if "is_authenticated" not in st.session_state: st.session_state.is_authenticated
 if "view_mode" not in st.session_state: st.session_state.view_mode = "preview"
 if "current_pdf_url" not in st.session_state: st.session_state.current_pdf_url = None
 if "current_pdf_page" not in st.session_state: st.session_state.current_pdf_page = 1
-# 이전 상태 변수 초기화
 if "pdf_view_state" in st.session_state:
     del st.session_state.pdf_view_state
 if "ai_status" not in st.session_state: st.session_state.ai_status = ""
@@ -222,7 +203,7 @@ st.title("🏥 병원 규정 AI 검색기")
 if st.session_state.view_mode == "fullscreen":
     st.button("🔙 목록 보기", on_click=lambda: st.session_state.update(view_mode="preview"), width='stretch')
     if st.session_state.current_pdf_url:
-        render_pdf_with_js_jump(st.session_state.current_pdf_url, st.session_state.current_pdf_page)
+        render_pdf_context_window(st.session_state.current_pdf_url, st.session_state.current_pdf_page)
 
 # (분할 화면 모드)
 else:
@@ -322,7 +303,7 @@ else:
 
         if st.session_state.current_pdf_url:
             # ★★★ 함수 호출 변경
-            render_pdf_with_js_jump(st.session_state.current_pdf_url, st.session_state.current_pdf_page)
+            render_pdf_context_window(st.session_state.current_pdf_url, st.session_state.current_pdf_page)
         else:
             st.info("왼쪽에서 규정을 선택하세요.")
 
