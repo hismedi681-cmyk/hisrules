@@ -2,11 +2,12 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import re
-import base64 
 from supabase import create_client, Client, ClientOptions
 from httpx import Timeout
-import httpx 
+import httpx
 from sentence_transformers import SentenceTransformer
+# ★ [핵심 수정 1] PDF 전용 뷰어 라이브러리 import
+from streamlit_pdf_viewer import pdf_viewer
 
 # --- 1. 페이지 설정 ---
 st.set_page_config(
@@ -79,9 +80,11 @@ def run_ai_search(query_text, search_mode, _supabase, _model):
         st.error(f"❌ [오류] AI 검색 중 문제가 발생했습니다: {e}")
         return [], None
 
+# ★ [핵심 수정 2] Base64 변환 대신 순수 Binary 데이터 다운로드로 변경
+# Base64 인코딩은 브라우저 메모리를 많이 잡아먹고 차단될 수 있음
 @st.cache_data(ttl=3600)
-def get_pdf_base64(url: str):
-    """ PDF URL을 받아 Base64 문자열로 변환합니다. (보안 우회) """
+def get_pdf_bytes(url: str):
+    """ PDF URL을 받아 바이너리(bytes) 데이터로 반환합니다. """
     try:
         if url.startswith("http://"): url = url.replace("http://", "https://")
         
@@ -92,7 +95,7 @@ def get_pdf_base64(url: str):
         response = httpx.get(url, headers=headers, timeout=15.0)
         
         if response.status_code == 200:
-            return base64.b64encode(response.content).decode('utf-8')
+            return response.content  # bytes 반환
         else:
             st.error(f"❌ PDF 다운로드 실패: HTTP {response.status_code}")
             return None
@@ -100,34 +103,32 @@ def get_pdf_base64(url: str):
         st.error(f"❌ PDF 다운로드 오류: {e}")
         return None
 
+# ★ [핵심 수정 3] pdf_viewer 컴포넌트 사용
 def render_native_pdf(pdf_url: str, page: int = 1):
-    """ 브라우저 자체 PDF 뷰어 """
+    """ streamlit-pdf-viewer를 사용한 고화질 렌더링 """
     if not pdf_url:
         st.info("규정을 선택하세요.")
         return
 
-    # [안전장치] 원본 링크 제공
-    st.markdown(f"""
-    <a href="{pdf_url}" target="_blank" style="
-        display: inline-block;
-        background-color: #f0f2f6;
-        color: #31333F;
-        padding: 6px 12px;
-        border-radius: 4px;
-        text-decoration: none;
-        font-size: 14px;
-        margin-bottom: 10px;
-        border: 1px solid #d6d6d8;">
-        ↗️ 새 창에서 PDF 원본 열기 (화면이 안 보이면 클릭)
-    </a>
-    """, unsafe_allow_html=True)
+    # 요청하신대로 '새 창에서 원본 열기' 버튼은 제거했습니다.
 
-    with st.spinner("📄 PDF 문서를 로딩 중입니다..."):
-        base64_pdf = get_pdf_base64(pdf_url)
+    with st.spinner("📄 고화질 문서를 로딩 중입니다..."):
+        pdf_data = get_pdf_bytes(pdf_url)
     
-    if base64_pdf:
-        pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}#page={page}" width="100%" height="1000px" type="application/pdf" style="border:none;"></iframe>'
-        st.markdown(pdf_display, unsafe_allow_html=True)
+    if pdf_data:
+        # width는 css width, height는 뷰어의 높이. 
+        # resolution_boost를 높이면 화질이 좋아지지만 느려질 수 있습니다. 기본값도 벡터라 충분히 선명합니다.
+        pdf_viewer(
+            input=pdf_data, 
+            width=700, 
+            height=1000, 
+            pages_to_render=[page] if page > 1 else None, # 특정 페이지만 볼지 전체 볼지(여기선 전체 스크롤 가능하게 None 추천하나 페이지 지정시 리스트)
+            # 만약 특정 페이지로 바로 이동하고 싶다면 pages_to_render=[page] 보다는 
+            # 뷰어 자체의 기능 제한이 있으므로, 사용자가 스크롤하게 두는 것이 가장 안정적입니다.
+            # 다만, 질문자님의 의도가 '해당 페이지'를 보는 것이므로 아래와 같이 처리합니다.
+        )
+        # *참고: pdf_viewer는 현재 특정 페이지 '점프' 기능보다는 렌더링할 페이지를 지정하는 방식이 주류입니다.
+        # 전체 문서를 다 보고 싶다면 pages_to_render 옵션을 빼세요.
     else:
         st.warning("⚠️ PDF 데이터를 불러올 수 없습니다.")
 
@@ -164,17 +165,17 @@ supabase, ai_model = init_connections()
 if not supabase or not ai_model: st.stop()
 map_data = load_map_data(supabase)
 
-# ★★★ [복구된 부분] 합본 PDF URL 가져오기 ★★★
+# 합본 PDF URL 가져오기
 try:
     combined_pdf_url = supabase.storage.from_("regulations").get_public_url("combined_regulations.pdf")
 except Exception:
     combined_pdf_url = None
-# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
 
 st.title("🏥 병원 규정 AI 검색기")
 
 # (전체 화면 모드)
 if st.session_state.view_mode == "fullscreen":
+    # 요청사항: 전체화면 보기 원래 위치로 되돌리고 -> 상단 버튼 유지
     st.button("🔙 목록 보기", on_click=lambda: st.session_state.update(view_mode="preview"), width='stretch')
     if st.session_state.current_pdf_url:
         render_native_pdf(st.session_state.current_pdf_url, st.session_state.current_pdf_page)
@@ -198,7 +199,7 @@ else:
         search_mode = st.radio("모드", ["[AI] 제목/분류 검색", "[AI] 본문 내용 검색", "제목 검색 (키워드)"])
         search_query = st.text_input("검색어", placeholder="예: 낙상")
         
-        st.markdown("### 규정 목록")
+        # 요청사항: 탐색 미리보기 같은 글자 삭제 -> 삭제함
         
         target_df = map_data
         ai_result_type = None
@@ -249,17 +250,21 @@ else:
             elif "키워드" in search_mode:
                 q = search_query.lower()
                 target_df = map_data[map_data['ch_name'].str.lower().str.contains(q) | 
-                                     map_data['std_name'].str.lower().str.contains(q) |
+                                     map_data['std_name'].str.lower().str.contains(q) | 
                                      map_data['me_name'].str.lower().str.contains(q)]
                 if target_df.empty: st.info("결과가 없습니다.")
 
+        # ★ [수정됨] 리스트 표시 로직
         if not target_df.empty:
+            # 요청사항: 원래처럼 아코디언으로 하나하나씩 클릭해야하는데 이미 열려있어 -> expanded 옵션 조정
+            # 검색어가 있을 때만(True) 펼치고, 없으면(False) 접어둡니다.
             should_expand = True if search_query else False
             
             for ch_name, ch_df in target_df.groupby('ch_name', sort=False):
                 with st.expander(f"📂 {ch_name}", expanded=should_expand):
                     for std_name, std_df in ch_df.groupby('std_name', sort=False):
                         std_id = std_df.iloc[0]['std_id']
+                        # 내부 아코디언도 검색 시에만 펼쳐집니다.
                         with st.expander(f"📙 {std_id} {std_name}", expanded=should_expand):
                             for _, row in std_df.iterrows():
                                 st.button(f"📄 {row['me_name']}", key=f"btn_{row['id']}", 
