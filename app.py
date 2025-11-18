@@ -103,9 +103,8 @@ def get_pdf_bytes(url: str):
         st.error(f"❌ PDF 다운로드 오류: {e}")
         return None
 
-# ★ [수정됨] render_native_pdf 함수
 def render_native_pdf(pdf_url: str, page: int = 1):
-    """ streamlit-pdf-viewer를 사용한 고화질 렌더링 """
+    """ streamlit-pdf-viewer를 사용한 고화질 렌더링 (파라미터 버그 수정판) """
     if not pdf_url:
         st.info("규정을 선택하세요.")
         return
@@ -114,16 +113,22 @@ def render_native_pdf(pdf_url: str, page: int = 1):
         pdf_data = get_pdf_bytes(pdf_url)
     
     if pdf_data:
-        # ★ [핵심 수정] page 변수가 float(1.0)이나 str일 수 있으므로 int로 강제 변환
-        target_page = int(page) 
+        # 기본 설정
+        pdf_params = {
+            "input": pdf_data,
+            "width": 700,
+            "height": 1000
+        }
         
-        pdf_viewer(
-            input=pdf_data, 
-            width=700, 
-            height=1000, 
-            # target_page가 1보다 클 때만 해당 페이지만 렌더링, 1이면 전체(None) 렌더링
-            pages_to_render=[target_page] if target_page > 1 else None 
-        )
+        # 페이지가 1보다 클 때만 pages_to_render 옵션을 추가합니다.
+        # (1페이지일 때 None을 넘기면 라이브러리가 에러를 뱉으므로, 아예 안 넘겨야 합니다)
+        target_page = int(page)
+        if target_page > 1:
+            pdf_params["pages_to_render"] = [target_page]
+
+        # **(딕셔너리 언패킹)으로 파라미터 전달
+        pdf_viewer(**pdf_params)
+
     else:
         st.warning("⚠️ PDF 데이터를 불러올 수 없습니다.")
 
@@ -295,4 +300,5 @@ else:
             st.rerun()
         else:
             st.sidebar.error("암호가 틀렸습니다.")
+
 
