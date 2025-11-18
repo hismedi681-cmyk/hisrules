@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import re
-import base64 # ★ [핵심] 데이터를 직접 주입하기 위한 라이브러리
+import base64 
 from supabase import create_client, Client, ClientOptions
 from httpx import Timeout
 import httpx 
@@ -13,7 +13,7 @@ st.set_page_config(
     page_title="병원 규정 AI 검색기",
     page_icon="🏥",
     layout="wide",
-    initial_sidebar_state="collapsed" # 관리자 패널 닫힘 상태 시작
+    initial_sidebar_state="collapsed" # 사이드바 기본 닫힘
 )
 
 # --- 2. Supabase 및 AI 모델 연결 ---
@@ -52,7 +52,8 @@ def load_map_data(_supabase: Client):
                 return (0,)
         df['std_sort_key'] = df['std_id'].apply(create_sort_key)
         return df.sort_values(by=['std_sort_key', 'me_id'])
-    except Exception:
+    except Exception as e:
+        st.error(f"데이터 로드 오류: {e}")
         return pd.DataFrame()
 
 # --- 3. 핵심 기능 함수 ---
@@ -75,39 +76,61 @@ def run_ai_search(query_text, search_mode, _supabase, _model):
     except Exception:
         return [], None
 
-# ★★★ [핵심 전략] Base64 인코딩을 통한 보안 우회 뷰어 ★★★
+# ★★★ [핵심 수정] PDF 다운로드 로직 강화 (User-Agent 추가) ★★★
 @st.cache_data(ttl=3600)
 def get_pdf_base64(url: str):
-    """ PDF URL을 받아 Base64 문자열로 변환합니다. (보안 우회) """
+    """ PDF URL을 받아 Base64 문자열로 변환합니다. """
     try:
         if url.startswith("http://"): url = url.replace("http://", "https://")
-        response = httpx.get(url, timeout=10.0)
+        
+        # [수정] 브라우저인 척 헤더를 추가하여 차단 방지
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        
+        response = httpx.get(url, headers=headers, timeout=15.0) # 타임아웃 15초로 연장
+        
         if response.status_code == 200:
-            # 바이너리 데이터를 base64 문자열로 인코딩
             return base64.b64encode(response.content).decode('utf-8')
-    except:
-        pass
-    return None
+        else:
+            # 실패 시 로그 출력 (관리자용)
+            print(f"PDF Download Failed: {response.status_code} for URL: {url}")
+            return None
+    except Exception as e:
+        print(f"PDF Error: {e}")
+        return None
 
 def render_native_pdf(pdf_url: str, page: int = 1):
-    """ 브라우저 자체 PDF 뷰어를 강제로 활성화하는 HTML 생성 """
+    """ Base64 주입 방식 뷰어 + 실패 시 직접 링크 제공 """
     if not pdf_url:
-        st.info("규정을 선택하세요.")
+        st.info("좌측 목록에서 규정을 선택하세요.")
         return
 
-    with st.spinner("📄 PDF 뷰어 로딩 중..."):
-        # 1. 서버에서 PDF 데이터를 직접 가져옴 (CORS 우회)
+    # [안전장치] 뷰어 상단에 항상 원본 링크 버튼 표시 (뷰어가 깨져도 볼 수 있게 함)
+    st.markdown(f"""
+    <a href="{pdf_url}" target="_blank" style="
+        display: inline-block;
+        background-color: #f0f2f6;
+        color: #31333F;
+        padding: 8px 12px;
+        border-radius: 4px;
+        text-decoration: none;
+        font-size: 14px;
+        margin-bottom: 10px;
+        border: 1px solid #d6d6d8;">
+        ↗️ 새 창에서 PDF 원본 열기 (화면이 안 보이면 클릭)
+    </a>
+    """, unsafe_allow_html=True)
+
+    with st.spinner("📄 문서를 불러오는 중입니다..."):
         base64_pdf = get_pdf_base64(pdf_url)
     
     if base64_pdf:
-        # 2. 데이터를 브라우저에게 '내부 데이터'인 것처럼 속여서 주입 (data:application/pdf;base64)
-        # '#page=N' 태그를 사용하여 해당 페이지로 이동
         pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}#page={page}" width="100%" height="1000px" type="application/pdf" style="border:none;"></iframe>'
         st.markdown(pdf_display, unsafe_allow_html=True)
     else:
-        st.error("❌ PDF 데이터를 불러올 수 없습니다.")
-        st.link_button("↗️ 새 창에서 열기", pdf_url)
-# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+        st.error("❌ 문서를 미리보기로 불러오지 못했습니다.")
+        st.caption("위의 '새 창에서 PDF 원본 열기' 버튼을 이용해주세요.")
 
 def set_pdf_url(url: str, page: int):
     st.session_state.current_pdf_url = url
@@ -148,7 +171,6 @@ st.title("🏥 병원 규정 AI 검색기")
 if st.session_state.view_mode == "fullscreen":
     st.button("🔙 목록 보기", on_click=lambda: st.session_state.update(view_mode="preview"), width='stretch')
     if st.session_state.current_pdf_url:
-        # ★ 수정된 네이티브 뷰어 호출
         render_native_pdf(st.session_state.current_pdf_url, st.session_state.current_pdf_page)
 
 # (분할 화면 모드)
@@ -167,7 +189,7 @@ else:
         
         if search_query:
             if "[AI]" in search_mode:
-                with st.spinner("AI 검색 중..."):
+                with st.spinner(st.session_state.ai_status if st.session_state.ai_status else "AI 검색 중..."):
                     ai_results, ai_result_type = run_ai_search(search_query, search_mode, supabase, ai_model)
                     if ai_results:
                         if ai_result_type == "map":
@@ -186,25 +208,35 @@ else:
                                                   key=f"c_{row['id']}", 
                                                   on_click=set_pdf_url, args=(pdf_url, row['page_num']))
                             target_df = pd.DataFrame() # 아코디언 숨김
+                    else:
+                        st.info("ℹ️ AI 검색 결과가 없습니다.")
+                        target_df = pd.DataFrame()
 
             elif "키워드" in search_mode:
                 q = search_query.lower()
-                target_df = map_data[map_data['me_name'].str.lower().str.contains(q) | map_data['std_name'].str.lower().str.contains(q)]
+                target_df = map_data[map_data['ch_name'].str.lower().str.contains(q) | 
+                                     map_data['std_name'].str.lower().str.contains(q) |
+                                     map_data['me_name'].str.lower().str.contains(q)]
+                if target_df.empty: st.info("결과가 없습니다.")
 
+        # (아코디언 렌더링 - 수정됨)
         if not target_df.empty:
-            for ch, ch_df in target_df.groupby('ch_name', sort=False):
-                with st.expander(f"📂 {ch}", expanded=bool(search_query)):
-                    for std, std_df in ch_df.groupby('std_name', sort=False):
+            # ★ [핵심 수정] 검색어가 있으면 펼치고(True), 없으면 모두 닫음(False)
+            should_expand = True if search_query else False
+            
+            for ch_name, ch_df in target_df.groupby('ch_name', sort=False):
+                with st.expander(f"📂 {ch_name}", expanded=should_expand):
+                    for std_name, std_df in ch_df.groupby('std_name', sort=False):
                         std_id = std_df.iloc[0]['std_id']
-                        st.caption(f"📙 {std_id} {std}")
-                        for _, row in std_df.iterrows():
-                            st.button(f"📄 {row['me_name']}", key=f"btn_{row['id']}", 
-                                      on_click=set_pdf_url, args=(row['pdf_url'], 1))
+                        # 내부는 항상 닫아두거나, 검색 시에만 엶
+                        with st.expander(f"📙 {std_id} {std_name}", expanded=should_expand):
+                            for _, row in std_df.iterrows():
+                                st.button(f"📄 {row['me_name']}", key=f"btn_{row['id']}", 
+                                          on_click=set_pdf_url, args=(row['pdf_url'], 1))
 
     with col_viewer:
         st.header("미리보기")
         if st.session_state.current_pdf_url:
-            # ★ 수정된 네이티브 뷰어 호출
             render_native_pdf(st.session_state.current_pdf_url, st.session_state.current_pdf_page)
         else:
             st.info("왼쪽에서 규정을 선택하세요.")
