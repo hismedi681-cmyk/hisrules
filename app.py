@@ -105,7 +105,7 @@ def get_pdf_bytes(url: str):
 # ★★★ [NEW] 최종 안정화 뷰어 함수: 듀얼 모드 (전체/맥락) ★★★
 def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
     """ 
-    [듀얼 모드] target_page에 따라 로드 방식을 결정합니다. (NoneType 에러 방지 포함)
+    [듀얼 모드] target_page에 따라 로드 방식을 결정합니다. (AI 검색 시 1페이지 집중 모드)
     """
     # 1. 입력 페이지 번호를 확실하게 int로 변환
     target_page = int(page) 
@@ -116,19 +116,13 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
 
     # 2. 로딩 모드 결정 및 페이지 계산
     if target_page == 1:
-        # ★★★ 최종 수정: None 대신 빈 리스트 []를 전달하여 라이브러리 오류 방지 ★★★
-        pages_to_load = [] 
+        # 일반 규정 목록 또는 합본 PDF 클릭 시: 전체 로드 시도 (None으로 인해 TypeError 발생 방지)
+        pages_to_load = [] # 빈 리스트는 전체 로드 효과를 냅니다.
         spinner_text = "📄 전체 문서를 로딩 중..."
     else:
-        # 맥락 창 로드 (AI 검색 시)
-        context_range = 20
-        
-        # 타입 안정화된 start/end 계산
-        start = int(max(1, target_page - context_range))
-        end = int(target_page + context_range)
-        
-        pages_to_load = list(range(start, end + 1))
-        spinner_text = "📄 AI 검색 문맥 창을 로딩 중..."
+        # ★★★ AI 검색 결과 클릭 시: 타겟 페이지 한 장만 로드 ★★★
+        pages_to_load = [target_page]
+        spinner_text = "📄 AI 검색 타겟 페이지를 로딩 중..."
 
     # 3. PDF 렌더링
     with st.spinner(spinner_text):
@@ -139,7 +133,7 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
             input=pdf_data, 
             width=700, 
             height=1000,
-            pages_to_render=pages_to_load # [] 또는 계산된 페이지 리스트 전달
+            pages_to_render=pages_to_load # [] 또는 [타겟 페이지] 리스트 사용
         )
     else:
         st.error("❌ PDF 문서를 로딩할 수 없습니다.")
@@ -308,5 +302,6 @@ else:
             st.rerun()
         else:
             st.sidebar.error("암호가 틀렸습니다.")
+
 
 
