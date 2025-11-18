@@ -17,8 +17,6 @@ st.set_page_config(
 )
 
 # --- 2. Supabase 및 AI 모델 연결 ---
-# (생략: 기존 코드와 동일)
-
 @st.cache_resource
 def init_connections():
     try:
@@ -104,43 +102,41 @@ def get_pdf_bytes(url: str):
         return None
 
 
-# ★★★ [NEW] 최종 안정화 뷰어 함수: 맥락 창 렌더링 (±10 페이지) ★★★
-def render_pdf_context_window(pdf_url: str, page: int = 1):
+# ★★★ [NEW] 최종 안정화 뷰어 함수: 모드 전환 (전체/맥락) ★★★
+def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
     """ 
-    [맥락 창 모드]
-    - 타겟 페이지를 중심으로 앞뒤 10 페이지(총 21페이지)만 로드하여 안정성과 문맥을 확보합니다.
+    [모드 전환] target_page에 따라 로드 방식을 결정합니다.
+    - page=1: 전체 로드 (Full Scroll Mode)
+    - page>1: 맥락 창 로드 (Context Window Mode)
     """
     target_page = int(page)
-    context_range = 10 # 앞뒤 10페이지
     
     if not pdf_url:
         st.info("규정을 선택하세요.")
         return
 
-    # 로드할 페이지의 시작점과 끝점을 계산 (1페이지 미만으로 내려가지 않도록 처리)
-    start = max(1, target_page - context_range)
-    end = target_page + context_range
-    pages_to_load = list(range(start, end + 1)) 
+    # 1. 로딩 모드 결정 및 페이지 계산
+    if target_page == 1:
+        # 전체 로드 모드: 목록 클릭, 합본 클릭 시 (1페이지부터 시작)
+        pages_to_load = None 
+        mode_info_text = "전체 문서가 로드되었습니다. 자유롭게 스크롤하세요."
+        mode_style = "info"
+    else:
+        # 맥락 창 모드: AI 검색 결과 클릭 시
+        context_range = 20 # 앞뒤 20페이지로 변경
+        start = max(1, target_page - context_range)
+        end = target_page + context_range
+        pages_to_load = list(range(start, end + 1))
+        mode_info_text = f"AI 검색 결과 문맥 창 ({start}p ~ {end}p)이 로드되었습니다."
+        mode_style = "warning"
 
-    # 안내 메시지 (자동 점프 및 전체 로드 메시지 제거, 핵심 정보만 표시)
-    st.markdown(f"""
-        <div style='
-            background-color: #e0f7fa; /* 하늘색 배경 */
-            padding: 10px; 
-            border-radius: 5px; 
-            text-align: center;
-            margin-bottom: 15px;
-            font-size: 1.1em;
-            font-weight: bold;
-            color: #00838f; /* 청록색 텍스트 */
-        '>
-            ⬇️ AI 검색 결과 **p. {target_page}** 주변 **({start}p ~ {end}p)** 문맥을 확인하세요.
-        </div>
-    """, unsafe_allow_html=True)
+
+    # 2. 로딩 안내 메시지 (메시지 내용을 간결하게 변경)
+    st.markdown(f"**ℹ️ {mode_info_text}**")
     st.markdown("---")
     
-    # PDF 렌더링
-    with st.spinner("📄 PDF 문맥을 로딩 중... (안정화 모드)"):
+    # 3. PDF 렌더링
+    with st.spinner(f"📄 PDF 문서를 로딩 중..."):
         pdf_data = get_pdf_bytes(pdf_url)
     
     if pdf_data:
@@ -148,7 +144,7 @@ def render_pdf_context_window(pdf_url: str, page: int = 1):
             input=pdf_data, 
             width=700, 
             height=1000,
-            pages_to_render=pages_to_load # 계산된 21페이지 리스트만 로드
+            pages_to_render=pages_to_load # None 또는 계산된 페이지 리스트 사용
         )
     else:
         st.error("❌ PDF 문서를 로딩할 수 없습니다.")
@@ -158,8 +154,6 @@ def set_pdf_url(url: str, page: int):
     st.session_state.current_pdf_url = url
     st.session_state.current_pdf_page = page
     st.session_state.view_mode = "preview" 
-    if "pdf_view_state" in st.session_state:
-        del st.session_state.pdf_view_state
 
 # --- 4. UI 구성 (메인 루프) ---
 
@@ -176,8 +170,6 @@ if "is_authenticated" not in st.session_state: st.session_state.is_authenticated
 if "view_mode" not in st.session_state: st.session_state.view_mode = "preview"
 if "current_pdf_url" not in st.session_state: st.session_state.current_pdf_url = None
 if "current_pdf_page" not in st.session_state: st.session_state.current_pdf_page = 1
-if "pdf_view_state" in st.session_state:
-    del st.session_state.pdf_view_state
 if "ai_status" not in st.session_state: st.session_state.ai_status = ""
 
 if not st.session_state.is_authenticated:
@@ -203,7 +195,8 @@ st.title("🏥 병원 규정 AI 검색기")
 if st.session_state.view_mode == "fullscreen":
     st.button("🔙 목록 보기", on_click=lambda: st.session_state.update(view_mode="preview"), width='stretch')
     if st.session_state.current_pdf_url:
-        render_pdf_context_window(st.session_state.current_pdf_url, st.session_state.current_pdf_page)
+        # ★★★ 함수 호출 변경
+        render_pdf_viewer_mode(st.session_state.current_pdf_url, st.session_state.current_pdf_page)
 
 # (분할 화면 모드)
 else:
@@ -303,7 +296,7 @@ else:
 
         if st.session_state.current_pdf_url:
             # ★★★ 함수 호출 변경
-            render_pdf_context_window(st.session_state.current_pdf_url, st.session_state.current_pdf_page)
+            render_pdf_viewer_mode(st.session_state.current_pdf_url, st.session_state.current_pdf_page)
         else:
             st.info("왼쪽에서 규정을 선택하세요.")
 
