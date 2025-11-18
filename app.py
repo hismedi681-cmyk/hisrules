@@ -7,19 +7,17 @@ from httpx import Timeout
 import httpx 
 from sentence_transformers import SentenceTransformer
 
-# --- 1. 페이지 설정 (파일 최상단) ---
+# --- 1. 페이지 설정 (수정됨) ---
 st.set_page_config(
     page_title="병원 규정 AI 검색기",
     page_icon="🏥",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed" # ★ [수정] 사이드바 기본 닫힘 설정
 )
 
 # --- 2. Supabase 및 AI 모델 연결 ---
 @st.cache_resource
 def init_connections():
-    """
-    secrets.toml에서 연결 정보를 읽어 Supabase 클라이언트와 AI 모델을 초기화합니다.
-    """
     try:
         url = st.secrets["supabase"]["url"]
         key = st.secrets["supabase"]["anon_key"]
@@ -39,19 +37,14 @@ def init_connections():
 
 @st.cache_data(ttl=600)
 def load_map_data(_supabase: Client):
-    """
-    [2-Track 수정] Supabase DB에서 '지도(map)' 데이터만 로드합니다. (아코디언 UI용)
-    """
     try:
-        # ★★★ 'match_map'이 반환하는 모든 컬럼을 가져오도록 수정 ★★★
         response = _supabase.table("regulations_map").select(
             "id, ch_name, std_id, std_name, me_id, me_name, pdf_filename, pdf_url"
         ).order("id").execute()
-        # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
         
         df = pd.DataFrame(response.data)
         if df.empty:
-            st.error("❌ [오류] '지도(regulations_map)' 데이터를 불러오지 못했습니다. admin_sync.py를 먼저 실행하세요.")
+            st.error("❌ [오류] 데이터가 없습니다.")
             return pd.DataFrame()
         
         def create_sort_key(std_id_str):
@@ -65,15 +58,12 @@ def load_map_data(_supabase: Client):
         df = df.sort_values(by=['std_sort_key', 'me_id']) 
         return df
     except Exception as e:
-        st.error(f"❌ [오류] '지도' 데이터를 불러오는 중 문제가 발생했습니다: {e}")
+        st.error(f"❌ [오류] 데이터를 불러오는 중 문제가 발생했습니다: {e}")
         return pd.DataFrame()
 
 # --- 3. 핵심 기능 함수 ---
 
 def run_ai_search(query_text: str, search_mode: str, _supabase: Client, _model: SentenceTransformer):
-    """
-    "2-Track" 전략에 따라 올바른 Supabase 함수를 호출합니다.
-    """
     if not query_text or not _supabase or not _model:
         return [], None
         
@@ -85,11 +75,11 @@ def run_ai_search(query_text: str, search_mode: str, _supabase: Client, _model: 
             response = _supabase.rpc('match_map', {
                 'query_vector': query_vector,
                 'match_threshold': 0.3, 
-                'match_count': 10 # <-- 아코디언 구성을 위해 더 많이 가져옵니다.
+                'match_count': 10 
             }).execute()
             return response.data, "map" 
             
-        else: # "[AI] 본문 내용 검색"
+        else: 
             st.session_state.ai_status = "✅ '본문 전체'에서 AI 검색 중..."
             response = _supabase.rpc('match_chunks_all', {
                 'query_vector': query_vector,
@@ -100,31 +90,43 @@ def run_ai_search(query_text: str, search_mode: str, _supabase: Client, _model: 
 
     except Exception as e:
         st.error(f"❌ [오류] AI 검색 중 문제가 발생했습니다: {e}")
-        st.exception(e)
         return [], None
 
+# ★★★ [수정] 강력해진 PDF 뷰어 함수 ★★★
 def get_pdf_embed_html(pdf_url: str, page: int = 1) -> str:
-    """ PDF 임베드 HTML 생성 (페이지 점프 기능 포함) """
+    """ 
+    Chrome 차단 문제를 해결하기 위해 <embed> 태그 사용 및 HTTPS 강제 적용 
+    """
     if not pdf_url:
         return "<p>PDF URL이 없습니다.</p>"
+    
+    # 1. HTTPS 강제 (Mixed Content 차단 방지)
+    if pdf_url.startswith("http://"):
+        pdf_url = pdf_url.replace("http://", "https://")
+
     page_to_show = max(1, page)
+    # 캐시 버스팅 및 페이지 점프
     final_url = f"{pdf_url}?v={page_to_show}#page={page_to_show}"
     
+    # 2. <embed> 태그 사용 (iframe보다 호환성 좋음)
     return f"""
-        <iframe src="{final_url}&navpanes=0&toolbar=0" width="100%" height="1000px" style="border:none;">
-            <p>PDF를 표시할 수 없습니다.</p>
-        </iframe>
+        <div style="display: flex; justify-content: flex-end; margin-bottom: 10px;">
+            <a href="{pdf_url}" target="_blank" style="background-color: #ff4b4b; color: white; padding: 5px 10px; text-decoration: none; border-radius: 5px; font-size: 0.8rem;">
+                ↗️ 새 창에서 PDF 열기 (오류 시 클릭)
+            </a>
+        </div>
+        <embed src="{final_url}" type="application/pdf" width="100%" height="1000px" />
     """
+# ★★★★★★★★★★★★★★★★★★★★★★★★★★★
 
 def set_pdf_url(url: str, page: int):
-    """ PDF 뷰어 상태 변경 콜백 """
     st.session_state.current_pdf_url = url
     st.session_state.current_pdf_page = page
     st.session_state.view_mode = "preview" 
 
 # --- 4. Streamlit UI 구성 ---
 
-# --- 4-0. 앱 보안 (공통 비밀번호) ---
+# (보안 체크)
 def check_password():
     if "password" not in st.session_state or st.session_state.password == "":
         st.session_state.is_authenticated = False
@@ -137,7 +139,6 @@ def check_password():
         st.session_state["is_authenticated"] = False
         st.error("비밀번호가 올바르지 않습니다.")
 
-# (세션 상태 초기화)
 if "is_authenticated" not in st.session_state:
     st.session_state.is_authenticated = False
 if "view_mode" not in st.session_state:
@@ -149,7 +150,7 @@ if "current_pdf_page" not in st.session_state:
 if "ai_status" not in st.session_state:
     st.session_state.ai_status = ""
 
-# --- 비밀번호 입력 화면 ---
+# --- 로그인 화면 ---
 if not st.session_state.is_authenticated:
     st.title("🏥 병원 규정 AI 검색기")
     with st.container(border=True): 
@@ -163,19 +164,15 @@ if not st.session_state.is_authenticated:
         )
     st.stop() 
 
-# --- 비밀번호 통과 시, 메인 앱 로드 ---
-
-# (서비스 연결)
+# --- 메인 앱 ---
 supabase, ai_model = init_connections()
 if not supabase or not ai_model:
     st.stop()
 
-# (데이터 로드)
-map_data = load_map_data(supabase) # (아코디언용 원본 데이터)
+map_data = load_map_data(supabase)
 if map_data.empty:
     st.stop()
     
-# (합본 PDF URL 미리 가져오기)
 try:
     combined_pdf_url = supabase.storage.from_("regulations").get_public_url("combined_regulations.pdf")
 except Exception:
@@ -183,7 +180,7 @@ except Exception:
 
 st.title("🏥 병원 규정 AI 검색기")
 
-# --- 전체 화면 로직 ---
+# --- 뷰어 로직 ---
 if st.session_state.view_mode == "fullscreen":
     st.button("🔙 목록 보기", on_click=lambda: st.session_state.update(view_mode="preview"), width='stretch')
     
@@ -193,13 +190,11 @@ if st.session_state.view_mode == "fullscreen":
             unsafe_allow_html=True
         )
     else:
-        st.info("표시할 PDF가 선택되지 않았습니다. '목록 보기'로 돌아가세요.")
+        st.info("표시할 PDF가 선택되지 않았습니다.")
 
 else:
-    # --- [미리보기 모드 (기본)] ---
-    col_nav, col_viewer = st.columns([1, 2]) # 1:2 비율
+    col_nav, col_viewer = st.columns([1, 2]) 
 
-    # --- 좌측 네비게이터 (col_nav) ---
     with col_nav:
         st.header("탐색")
         
@@ -216,20 +211,14 @@ else:
         
         search_mode = st.radio(
             "검색 모드", 
-            ["[AI] 제목/분류 검색", "[AI] 본문 내용 검색", "제목 검색 (키워드)"], # <-- 3개 모드
-            horizontal=True,
-            help="""
-            - **[AI] 제목/분류 검색:** '환자 확인'처럼 특정 기준(ME)이나 규정집 제목을 AI로 찾습니다. (아코디언 필터링)
-            - **[AI] 본문 내용 검색:** '손씻기 절차'처럼 규정집 본문의 상세 내용을 AI로 찾습니다. (본문 조각 리스트)
-            - **제목 검색 (키워드):** 'HIS-1.1'처럼 정확한 키워드로 아코디언을 필터링합니다.
-            """
+            ["[AI] 제목/분류 검색", "[AI] 본문 내용 검색", "제목 검색 (키워드)"], 
+            horizontal=True
         )
         
-        search_query = st.text_input("🔍 검색어 입력", placeholder="예: 낙상 평가도구, 개방형 질문, HIS-1.1")
+        search_query = st.text_input("🔍 검색어 입력", placeholder="예: 낙상 평가도구, HIS-1.1")
         
         st.subheader("규정 목록")
         
-        # (1. 검색어가 없을 때 - 기본 아코디언)
         if not search_query:
             st.session_state.ai_status = "" 
             for ch_name, ch_df in map_data.groupby('ch_name', sort=False):
@@ -244,38 +233,32 @@ else:
                                     on_click=set_pdf_url,
                                     args=(row['pdf_url'], 1) 
                                 )
-        
-        # (2. 검색어가 있을 때 - 필터링된 결과)
         else:
             ai_results = []
             result_type = None
-            filtered_df = pd.DataFrame() # 아코디언을 그릴 DataFrame
+            filtered_df = pd.DataFrame() 
 
-            # --- [AI] 제목/분류 검색 로직 (아코디언 필터링) ---
             if search_mode == "[AI] 제목/분류 검색":
                 with st.spinner("🧠 AI가 '제목/분류'(을)를 검색 중입니다..."):
                     st.session_state.ai_status = "..." 
                     ai_results, result_type = run_ai_search(search_query, search_mode, supabase, ai_model)
                 
                 if not ai_results:
-                    st.info(f"ℹ️ 'AI 제목/분류' 검색 결과가 없습니다.")
+                    st.info(f"ℹ️ 결과가 없습니다.")
                 else:
-                    # ★★★ [의도 수정] 결과를 DataFrame으로 변환 ★★★
                     filtered_df = pd.DataFrame(ai_results)
-                    st.markdown(f"**'{search_query}'(와)과 유사한 {len(filtered_df)}건의 항목을 찾았습니다.**")
+                    st.markdown(f"**'{search_query}'(와)과 유사한 {len(filtered_df)}건을 찾았습니다.**")
 
-            # --- [AI] 본문 내용 검색 로직 (새 리스트) ---
             elif search_mode == "[AI] 본문 내용 검색":
                 with st.spinner("🧠 AI가 '본문 전체'(을)를 검색 중입니다..."):
                     st.session_state.ai_status = "..." 
                     ai_results, result_type = run_ai_search(search_query, search_mode, supabase, ai_model)
                 
                 if not ai_results:
-                    st.info(f"ℹ️ 'AI 본문 내용' 검색 결과가 없습니다.")
+                    st.info(f"ℹ️ 결과가 없습니다.")
                 else:
-                    st.markdown(f"**'{search_query}'(와)과 유사한 {len(ai_results)}건의 본문 조각을 찾았습니다.**")
+                    st.markdown(f"**'{search_query}'(와)과 유사한 {len(ai_results)}건의 본문을 찾았습니다.**")
                     
-                    # (본문 검색은 URL 맵이 필요함)
                     url_map = map_data.drop_duplicates(subset=['pdf_filename'])
                     url_map = pd.Series(url_map.pdf_url.values, index=url_map.pdf_filename).to_dict()
 
@@ -300,10 +283,7 @@ else:
                                 on_click=set_pdf_url,
                                 args=(pdf_url_to_open, row['page_num'])
                             )
-                        else:
-                            st.error(f"오류: {result_filename}의 URL을 '지도(map)'에서 찾을 수 없습니다.")
 
-            # --- 제목 검색 (키워드) 로직 (아코디언 필터링) ---
             elif search_mode == "제목 검색 (키워드)":
                 st.session_state.ai_status = "" 
                 query = search_query.lower()
@@ -317,24 +297,15 @@ else:
                 filtered_df = map_data[mask]
                 
                 if filtered_df.empty:
-                    st.info("ℹ️ '제목 (키워드)' 검색 결과가 없습니다.")
+                    st.info("ℹ️ 검색 결과가 없습니다.")
                 else:
-                    st.markdown(f"**'{search_query}'(으)로 {len(filtered_df)}건의 항목을 찾았습니다.**")
+                    st.markdown(f"**'{search_query}'(으)로 {len(filtered_df)}건을 찾았습니다.**")
 
-            # --- ★★★ [의도 수정] 아코디언 렌더링 로직 (공통) ★★★ ---
-            # 'filtered_df'에 내용이 있으면 (AI 제목 검색 또는 키워드 제목 검색이 성공하면)
             if not filtered_df.empty:
-                # (match_map 결과는 'std_sort_key'가 없으므로 'ch_name', 'std_name'으로 그룹화)
-                # (match_map 결과에는 'ch_name' 등이 없으므로, 원본 map_data와 join해야 함)
-                
-                # 'match_map' 결과 (ai_results)는 'id'만 있습니다. 
-                # 이 'id'를 사용해 원본 'map_data'에서 전체 정보를 가져옵니다.
                 if result_type == "map":
                      result_ids = filtered_df['id'].tolist()
-                     # AI가 찾은 ID 순서대로 원본 map_data에서 행을 필터링하고 정렬
                      filtered_df = map_data[map_data['id'].isin(result_ids)].set_index('id').loc[result_ids].reset_index()
 
-                # (공통 아코디언 렌더링)
                 for ch_name, ch_df in filtered_df.groupby('ch_name', sort=False):
                     with st.expander(f"📂 {ch_name}", expanded=True):
                         for std_name, std_df in ch_df.groupby('std_name', sort=False):
@@ -348,7 +319,6 @@ else:
                                         args=(row['pdf_url'], 1) 
                                     )
 
-    # --- 우측 뷰어 (col_viewer) ---
     with col_viewer:
         st.button(
             "↗️ 전체 화면으로 보기", 
@@ -364,9 +334,9 @@ else:
                 unsafe_allow_html=True
             )
         else:
-            st.info("좌측 '탐색' 메뉴에서 규정을 선택하거나 'AI 검색'을 실행하세요.")
+            st.info("규정을 선택하면 여기에 미리보기가 표시됩니다.")
 
-# --- 관리자 패널 (st.sidebar) ---
+# --- 관리자 패널 ---
 if 'is_admin' not in st.session_state:
     st.session_state.is_admin = False
 
@@ -374,14 +344,10 @@ st.sidebar.title("관리자 패널")
 if st.session_state.is_admin:
     st.sidebar.success("관리자 모드 활성화")
     st.sidebar.markdown("---")
-    st.sidebar.subheader("앱 상태")
     st.sidebar.dataframe(map_data.head())
-    st.sidebar.caption(f"총 {len(map_data)}개의 '지도(ME)' 항목 로드됨")
 else:
     admin_pw = st.sidebar.text_input("관리자 암호:", type="password")
     if admin_pw:
         if admin_pw == st.secrets["app_security"]["admin_password"]:
             st.session_state.is_admin = True
             st.rerun()
-        else:
-            st.sidebar.error("암호가 틀렸습니다.")
