@@ -105,31 +105,33 @@ def get_pdf_bytes(url: str):
 # ★★★ [NEW] 최종 안정화 뷰어 함수: 듀얼 모드 (전체/맥락) ★★★
 def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
     """ 
-    [듀얼 모드] target_page에 따라 로드 방식을 결정합니다. 
-    - page=1: 전체 로드 (Full Scroll Mode)
-    - page>1: 맥락 창 로드 (Context Window Mode)
+    [듀얼 모드] target_page에 따라 로드 방식을 결정합니다. (타입 안정화 포함)
     """
-    # ★ 타입 에러 방지: 페이지 번호를 확실하게 Python 표준 int로 변환
+    # 1. 입력 페이지 번호를 확실하게 int로 변환 (기존 수정)
     target_page = int(page) 
     
     if not pdf_url:
         st.info("규정을 선택하세요.")
         return
 
-    # 1. 로딩 모드 결정 및 페이지 계산
+    # 2. 로딩 모드 결정 및 페이지 계산
     if target_page == 1:
-        # 일반 규정 목록 또는 합본 PDF 클릭 시: 전체 로드 시도
+        # 전체 로드 모드 (페이지 리스트 생성 안 함)
         pages_to_load = None 
         spinner_text = "📄 전체 문서를 로딩 중..."
     else:
-        # AI 검색 결과 클릭 시: 맥락 창 로드 (±20 페이지)
-        context_range = 20 
-        start = max(1, target_page - context_range)
-        end = target_page + context_range
+        # 맥락 창 로드 (AI 검색 시)
+        context_range = 20
+        
+        # ★★★ 핵심 수정: start와 end를 계산 후 명시적으로 int()로 감싸 타입 안전성 확보 ★★★
+        start = int(max(1, target_page - context_range))
+        end = int(target_page + context_range)
+        
+        # 리스트 생성
         pages_to_load = list(range(start, end + 1))
         spinner_text = "📄 AI 검색 문맥 창을 로딩 중..."
 
-    # 2. PDF 렌더링
+    # 3. PDF 렌더링
     with st.spinner(spinner_text):
         pdf_data = get_pdf_bytes(pdf_url)
     
@@ -138,11 +140,11 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
             input=pdf_data, 
             width=700, 
             height=1000,
-            pages_to_render=pages_to_load # None 또는 계산된 페이지 리스트 사용
+            # pages_to_load는 이제 int()로만 구성된 리스트입니다.
+            pages_to_render=pages_to_load 
         )
     else:
         st.error("❌ PDF 문서를 로딩할 수 없습니다.")
-
 
 def set_pdf_url(url: str, page: int):
     st.session_state.current_pdf_url = url
@@ -308,3 +310,4 @@ else:
             st.rerun()
         else:
             st.sidebar.error("암호가 틀렸습니다.")
+
