@@ -102,7 +102,7 @@ def get_pdf_bytes(url: str):
         return None
 
 
-# ★★★ JavaScript 스크롤 헬퍼 함수 정의 (픽셀 점프 및 재시도 로직 강화) ★★★
+# ★★★ [추가 1] JavaScript 스크롤 헬퍼 함수 정의 (픽셀 점프 및 재시도 로직 강화) ★★★
 def js_scroll_to_page_relative(scroll_index):
     """ PDF 뷰어의 내부 스크롤 컨테이너를 찾아서 상대적 인덱스 위치로 이동시키는 JS 코드를 삽입합니다. """
     
@@ -141,7 +141,7 @@ def js_scroll_to_page_relative(scroll_index):
     st.markdown(js_code, unsafe_allow_html=True)
 
 
-# ★★★ 최종 안정화 뷰어 함수: 듀얼 모드 (전체/맥락) ★★★
+# ★★★ [추가 2] 최종 안정화 뷰어 함수: 듀얼 모드 (전체/맥락) ★★★
 def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
     """ 
     [듀얼 모드] target_page에 따라 로드 방식을 결정하고, AI 검색 시 픽셀 점프를 시도합니다.
@@ -156,9 +156,9 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
     # 2. 로딩 모드 결정 및 페이지 계산
     if target_page == 1:
         # 일반 규정 목록 또는 합본 PDF 클릭 시: 전체 로드 시도
-        pages_to_load = [] 
+        pages_to_load = [] # 빈 리스트는 전체 로드 효과를 냅니다.
         spinner_text = "📄 전체 문서를 로딩 중..."
-        jump_needed = False
+        jump_index = 0 
     else:
         # AI 검색 결과 클릭 시: 맥락 창 로드 (±20 페이지)
         context_range = 20 
@@ -170,7 +170,6 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
         # 타겟 페이지가 로드된 페이지 리스트 내에서 몇 번째 인덱스인지 계산
         jump_index = target_page - start
         spinner_text = f"📄 AI 검색 문맥 창 ({start}p ~ {end}p) 로딩 및 {target_page}p로 점프 중..."
-        jump_needed = True
 
     # 3. PDF 렌더링
     with st.spinner(spinner_text):
@@ -185,7 +184,7 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
         )
         
         # 4. 렌더링 성공 후, AI 검색 모드일 때만 JS 스크롤 실행
-        if jump_needed and jump_index > 0:
+        if target_page > 1 and jump_index > 0:
             js_scroll_to_page_relative(jump_index)
             
     else:
@@ -293,7 +292,7 @@ else:
                                     
                                     raw_text = row['context_chunk']
                                     
-                                    # ★★★ 메타데이터 제거 로직 적용 ★★★
+                                    # ★★★ [수정] 메타데이터 제거 로직 적용 ★★★
                                     for keyword in keywords_to_remove:
                                         raw_text = re.sub(f'{re.escape(keyword)}[^\]]*\]', '', raw_text)
                                         
