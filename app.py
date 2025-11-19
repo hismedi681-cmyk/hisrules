@@ -18,8 +18,7 @@ st.set_page_config(
 
 # --- 1-1. 사용자 인증 함수 (로컬 환경 실행을 위해 가정된 함수) ---
 def check_password():
-    """Secrets에 설정된 비밀번호와 비교하여 인증합니다."""
-    # 이 부분은 실제 secrets 설정에 따라 다릅니다. 원본 코드를 기반으로 유지합니다.
+    # 이 함수는 secrets 파일 설정에 따라 다릅니다. 원본 코드를 기반으로 유지합니다.
     if "password" not in st.session_state: return
     if st.session_state["password"] == st.secrets["app_security"]["common_password"]:
         st.session_state["is_authenticated"] = True
@@ -112,7 +111,7 @@ def get_pdf_bytes(url: str):
         st.error(f"❌ PDF 다운로드 오류: {e}")
         return None
 
-# ★★★ [수정] set_pdf_url 함수 정의 (TypeError 해결) ★★★
+# ★★★ [수정 완료] set_pdf_url 함수 정의 (3개 인자) ★★★
 def set_pdf_url(url: str, load_mode_page: int, ai_target_page: int):
     """
     load_mode_page: PDF 뷰어가 로드할 페이지 번호 (1=전체, >1=단일 페이지)
@@ -230,7 +229,7 @@ else:
         
         st.divider()
         
-        search_mode = st.radio("모드", ["[AI] 제목/분류 검색", "[AI] 본문 내용 검색", "제목 검색 (키워드)"])
+        search_mode = st.radio("모드", ["[AI] 제목/분류 검색", "제목 검색 (키워드)"])
         search_query = st.text_input("검색어", placeholder="예: 낙상")
         
         st.markdown("### 규정 목록")
@@ -241,7 +240,7 @@ else:
         if search_query:
             if "[AI]" in search_mode:
                 with st.spinner(st.session_state.ai_status if st.session_state.ai_status else "AI 검색 중..."):
-                    ai_results, ai_result_type = run_ai_search(search_query, search_mode, supabase, ai_model)
+                    ai_results, ai_result_type = run_ai_search(query_text, search_mode, supabase, ai_model)
                     
                     if not ai_results:
                         st.info("ℹ️ 결과가 없습니다.")
@@ -271,7 +270,6 @@ else:
                                     
                                     # 메타데이터 제거 로직 적용
                                     for keyword in keywords_to_remove:
-                                        # rf''를 사용하여 정규식 이스케이프 경고를 피합니다.
                                         raw_text = re.sub(rf'{re.escape(keyword)}[^\]]*\]', '', raw_text)
                                         
                                     clean_text = raw_text.replace("[본문]", "").strip()
