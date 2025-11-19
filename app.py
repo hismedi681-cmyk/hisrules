@@ -101,76 +101,52 @@ def get_pdf_bytes(url: str):
         st.error(f"❌ PDF 다운로드 오류: {e}")
         return None
 
-
-# ★★★ [추가 1] JavaScript 스크롤 헬퍼 함수 정의 (픽셀 점프 및 재시도 로직 강화) ★★★
-def js_scroll_to_page_relative(scroll_index):
-    """ PDF 뷰어의 내부 스크롤 컨테이너를 찾아서 상대적 인덱스 위치로 이동시키는 JS 코드를 삽입합니다. """
-    
-    js_code = f"""
-    <script>
-        let attempts = 0;
-        const maxAttempts = 15; // 최대 1.5초까지 재시도
-        
-        function attemptScroll() {{
-            const viewer = document.querySelector('.streamlit-container .st-emotion-base:last-child');
-            
-            if (viewer) {{
-                const scrollableContainer = viewer.querySelector('.react-pdf__Document'); 
-                const firstPage = viewer.querySelector('.react-pdf__Page'); 
-
-                if (scrollableContainer && firstPage) {{
-                    const pageHeight = firstPage.offsetHeight;
-                    const scrollAmount = {scroll_index} * pageHeight;
-                    
-                    scrollableContainer.scrollTop = scrollAmount;
-                    console.log('PDF Scrolled successfully to index: {scroll_index}');
-                }} else if (attempts < maxAttempts) {{
-                    attempts++;
-                    // 재시도 (100ms 간격)
-                    setTimeout(attemptScroll, 100); 
-                }} else {{
-                    console.error('PDF page element not found after {{maxAttempts}} attempts.');
-                }}
-            }}
-        }}
-
-        // 페이지가 로드된 후 스크롤 시도
-        attemptScroll(); 
-    </script>
+# ★★★ 수정된 set_pdf_url 함수 ★★★
+def set_pdf_url(url: str, load_mode_page: int, ai_target_page: int):
     """
-    st.markdown(js_code, unsafe_allow_html=True)
+    load_mode_page: PDF 뷰어가 로드할 페이지 번호 (1=전체, >1=단일 페이지)
+    ai_target_page: AI 검색 결과의 실제 페이지 번호 (안내 메시지용)
+    """
+    st.session_state.current_pdf_url = url
+    st.session_state.current_pdf_page = load_mode_page 
+    st.session_state.ai_target_page = ai_target_page
+    st.session_state.view_mode = "preview" 
 
-
-# ★★★ [추가 2] 최종 안정화 뷰어 함수: 듀얼 모드 (전체/맥락) ★★★
+# ★★★ 최종 수정된 render_pdf_viewer_mode 함수 (요청하신 안내 문구 적용) ★★★
 def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
     """ 
-    [듀얼 모드] target_page에 따라 로드 방식을 결정하고, AI 검색 시 픽셀 점프를 시도합니다.
+    [듀얼 모드] target_load_page에 따라 로드 방식을 결정합니다.
+    - page=1: 전체 로드 (Full Scroll Mode)
+    - page>1: 단일 페이지 로드 (Single Page Mode)
     """
     # 1. 입력 페이지 번호를 확실하게 int로 변환 (TypeError 방지)
-    target_page = int(page) 
+    target_load_page = int(page) 
+    # AI 검색 결과가 찾은 페이지 번호 (안내 메시지용)
+    target_ai_page = st.session_state.get('ai_target_page', 1) 
     
     if not pdf_url:
         st.info("규정을 선택하세요.")
         return
 
     # 2. 로딩 모드 결정 및 페이지 계산
-    if target_page == 1:
-        # 일반 규정 목록 또는 합본 PDF 클릭 시: 전체 로드 시도
-        pages_to_load = [] # 빈 리스트는 전체 로드 효과를 냅니다.
+    if target_load_page == 1:
+        # 모드 1: 전체 로드 (Full Scroll Mode)
+        pages_to_load = [] 
         spinner_text = "📄 전체 문서를 로딩 중..."
-        jump_index = 0 
+        
+        # 안내 메시지 출력 (전체 로드 모드)
+        if target_ai_page > 1:
+             # ★★★ 최종 안내 문구 적용 (페이지 번호로 스크롤 요청) ★★★
+             st.info(f"📄 전체 문서 로드 완료. AI 검색 결과가 있는 **페이지 번호 {target_ai_page}**로 스크롤해서 가주세요.")
+             
     else:
-        # AI 검색 결과 클릭 시: 맥락 창 로드 (±20 페이지)
-        context_range = 20 
-        start = int(max(1, target_page - context_range))
-        end = int(target_page + context_range)
+        # 모드 2: 단일 페이지 로드 (Single Page Mode)
+        pages_to_load = [target_load_page]
+        spinner_text = f"📄 AI 검색 타겟 쪽만 로딩 중..."
         
-        pages_to_load = list(range(start, end + 1))
+        # ★★★ 최종 안내 문구 적용 (단일 페이지 로드 안내) ★★★
+        st.info(f"⚠️ 현재 쪽은 AI 검색 결과 내용만 로드되었습니다. 문맥을 확인하려면 '📖 전체 규정 스크롤' 버튼을 이용해 주세요.")
         
-        # 타겟 페이지가 로드된 페이지 리스트 내에서 몇 번째 인덱스인지 계산
-        jump_index = target_page - start
-        spinner_text = f"📄 AI 검색 문맥 창 ({start}p ~ {end}p) 로딩 및 {target_page}p로 점프 중..."
-
     # 3. PDF 렌더링
     with st.spinner(spinner_text):
         pdf_data = get_pdf_bytes(pdf_url)
@@ -182,16 +158,12 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
             height=1000,
             pages_to_render=pages_to_load
         )
-        
-        # 4. 렌더링 성공 후, AI 검색 모드일 때만 JS 스크롤 실행
-        if target_page > 1 and jump_index > 0:
-            js_scroll_to_page_relative(jump_index)
-            
     else:
         st.error("❌ PDF 문서를 로딩할 수 없습니다.")
 
 
 def set_pdf_url(url: str, page: int):
+    # 이 함수는 사용하지 않으므로 변경하지 않습니다.
     st.session_state.current_pdf_url = url
     st.session_state.current_pdf_page = page
     st.session_state.view_mode = "preview" 
@@ -200,6 +172,7 @@ def set_pdf_url(url: str, page: int):
 
 # (보안 체크)
 def check_password():
+    # 이 함수는 secrets 파일 설정에 따라 다릅니다. 원본 코드를 보존합니다.
     if "password" not in st.session_state: return
     if st.session_state["password"] == st.secrets["app_security"]["common_password"]:
         st.session_state["is_authenticated"] = True
@@ -207,10 +180,12 @@ def check_password():
     else:
         st.error("비밀번호 오류")
 
+# (세션 상태 초기화)
 if "is_authenticated" not in st.session_state: st.session_state.is_authenticated = False
 if "view_mode" not in st.session_state: st.session_state.view_mode = "preview"
 if "current_pdf_url" not in st.session_state: st.session_state.current_pdf_url = None
 if "current_pdf_page" not in st.session_state: st.session_state.current_pdf_page = 1
+if "ai_target_page" not in st.session_state: st.session_state.ai_target_page = 1 # ★★★ 추가/수정 ★★★
 if "ai_status" not in st.session_state: st.session_state.ai_status = ""
 
 if not st.session_state.is_authenticated:
@@ -247,7 +222,8 @@ else:
             st.button(
                 "📂 [전체 합본 보기]", 
                 on_click=set_pdf_url, 
-                args=(combined_pdf_url, 1),
+                # ★★★ set_pdf_url 인자 수정: (url, load_mode=1, ai_target=1) ★★★
+                args=(combined_pdf_url, 1, 1), 
                 key="btn_combined_pdf",
                 width='stretch'
             )
@@ -279,20 +255,21 @@ else:
                             url_map = map_data.drop_duplicates(subset=['pdf_filename'])
                             url_map = pd.Series(url_map.pdf_url.values, index=url_map.pdf_filename).to_dict()
 
-                            # ★★★ 메타데이터 제거를 위한 키워드 리스트
+                            # 메타데이터 제거를 위한 키워드 리스트
                             keywords_to_remove = ['[섹션:', '[하위섹션:', '[규칙:', '[행위:', '[대상:'] 
 
                             for row in ai_results:
                                 with st.container(border=True):
                                     c1, c2 = st.columns([4, 1])
-                                    c1.markdown(f"**📄 {row['pdf_filename']}** (p.{row['page_num']})")
+                                    # 페이지 번호로 표시 (사용자가 추후 PDF에 번호를 추가할 것을 가정)
+                                    c1.markdown(f"**📄 {row['pdf_filename']}** (페이지 번호: {row['page_num']})") 
                                     score = row['similarity']
                                     color = "green" if score >= 0.6 else "orange" if score >= 0.5 else "gray"
                                     c2.markdown(f":{color}[**{score:.0%}**]")
                                     
                                     raw_text = row['context_chunk']
                                     
-                                    # ★★★ [수정] 메타데이터 제거 로직 적용 ★★★
+                                    # 메타데이터 제거 로직 적용
                                     for keyword in keywords_to_remove:
                                         raw_text = re.sub(f'{re.escape(keyword)}[^\]]*\]', '', raw_text)
                                         
@@ -305,11 +282,22 @@ else:
                                     
                                     pdf_url = url_map.get(row['pdf_filename'])
                                     if pdf_url:
+                                        # 3-1. ★★★ 단일 페이지 보기 버튼 ★★★
                                         st.button(
-                                            "👉 이 페이지 바로 보기",
-                                            key=f"btn_chunk_{row['id']}",
+                                            "🔍 이 쪽만 보기",
+                                            key=f"btn_chunk_single_{row['id']}",
                                             on_click=set_pdf_url,
-                                            args=(pdf_url, row['page_num']),
+                                            # load_mode_page = row['page_num'] (단일 페이지 모드 활성화)
+                                            args=(pdf_url, row['page_num'], row['page_num']), 
+                                            use_container_width=True
+                                        )
+                                        # 3-2. ★★★ 전체 규정 스크롤 버튼 (안내) ★★★
+                                        st.button(
+                                            "📖 전체 규정 스크롤 (페이지 안내)",
+                                            key=f"btn_chunk_full_{row['id']}",
+                                            on_click=set_pdf_url,
+                                            # load_mode_page = 1 (전체 로드 모드 활성화)
+                                            args=(pdf_url, 1, row['page_num']),
                                             use_container_width=True
                                         )
                             target_df = pd.DataFrame()
@@ -331,7 +319,9 @@ else:
                         with st.expander(f"📙 {std_id} {std_name}", expanded=should_expand):
                             for _, row in std_df.iterrows():
                                 st.button(f"📄 {row['me_name']}", key=f"btn_{row['id']}", 
-                                          on_click=set_pdf_url, args=(row['pdf_url'], 1))
+                                          on_click=set_pdf_url, 
+                                          # ★★★ set_pdf_url 인자 수정: (url, load_mode=1, ai_target=1) ★★★
+                                          args=(row['pdf_url'], 1, 1)) 
 
     with col_viewer:
         st.button(
@@ -364,8 +354,3 @@ else:
             st.rerun()
         else:
             st.sidebar.error("암호가 틀렸습니다.")
-
-
-
-
-
