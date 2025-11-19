@@ -10,7 +10,7 @@ from streamlit_pdf_viewer import pdf_viewer
 
 # --- 1. 페이지 설정 ---
 st.set_page_config(
-    page_title="병원 규정 AI 검색기",
+    page_title="히즈메디 규정 AI 검색기",
     page_icon="🏥",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -346,3 +346,4 @@ else:
             st.rerun()
         else:
             st.sidebar.error("암호가 틀렸습니다.")
+
