@@ -16,9 +16,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- 1-1. 사용자 인증 함수 (로컬 환경 실행을 위해 가정된 함수) ---
+# --- 1-1. 사용자 인증 함수 ---
 def check_password():
-    # 이 함수는 secrets 파일 설정에 따라 다릅니다. 원본 코드를 기반으로 유지합니다.
     if "password" not in st.session_state: return
     if st.session_state["password"] == st.secrets["app_security"]["common_password"]:
         st.session_state["is_authenticated"] = True
@@ -111,7 +110,7 @@ def get_pdf_bytes(url: str):
         st.error(f"❌ PDF 다운로드 오류: {e}")
         return None
 
-# ★★★ [수정 완료] set_pdf_url 함수 정의 (3개 인자) ★★★
+# ★★★ [수정됨] 유일한 set_pdf_url 함수 정의 (3개 인자) ★★★
 def set_pdf_url(url: str, load_mode_page: int, ai_target_page: int):
     """
     load_mode_page: PDF 뷰어가 로드할 페이지 번호 (1=전체, >1=단일 페이지)
@@ -129,7 +128,7 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
     - page=1: 전체 로드 (Full Scroll Mode)
     - page>1: 단일 페이지 로드 (Single Page Mode)
     """
-    # 1. 입력 페이지 번호를 확실하게 int로 변환 (TypeError 방지)
+    # 1. 입력 페이지 번호를 확실하게 int로 변환
     target_load_page = int(page) 
     # AI 검색 결과가 찾은 페이지 번호 (안내 메시지용)
     target_ai_page = st.session_state.get('ai_target_page', 1) 
@@ -170,12 +169,6 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
     else:
         st.error("❌ PDF 문서를 로딩할 수 없습니다.")
 
-
-def set_pdf_url(url: str, page: int):
-    # 이 함수는 사용하지 않습니다. 호출부에서 3개의 인자를 사용하도록 통일했습니다.
-    st.session_state.current_pdf_url = url
-    st.session_state.current_pdf_page = page
-    st.session_state.view_mode = "preview" 
 
 # --- 4. UI 구성 (메인 루프) ---
 
@@ -229,7 +222,7 @@ else:
         
         st.divider()
         
-        search_mode = st.radio("모드", ["[AI] 제목/분류 검색", "제목 검색 (키워드)"])
+        search_mode = st.radio("모드", ["[AI] 제목/분류 검색", "[AI] 본문 내용 검색", "제목 검색 (키워드)"])
         search_query = st.text_input("검색어", placeholder="예: 낙상")
         
         st.markdown("### 규정 목록")
@@ -240,7 +233,7 @@ else:
         if search_query:
             if "[AI]" in search_mode:
                 with st.spinner(st.session_state.ai_status if st.session_state.ai_status else "AI 검색 중..."):
-                    ai_results, ai_result_type = run_ai_search(query_text, search_mode, supabase, ai_model)
+                    ai_results, ai_result_type = run_ai_search(search_query, search_mode, supabase, ai_model)
                     
                     if not ai_results:
                         st.info("ℹ️ 결과가 없습니다.")
