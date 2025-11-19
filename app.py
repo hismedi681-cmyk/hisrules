@@ -181,7 +181,7 @@ if "ai_target_page" not in st.session_state: st.session_state.ai_target_page = 1
 if "ai_status" not in st.session_state: st.session_state.ai_status = ""
 
 if not st.session_state.is_authenticated:
-    st.title("🏥 병원 규정 AI 검색기")
+    st.title("🏥 히즈메디 규정 AI 검색기")
     with st.container(border=True):
         st.text_input("비밀번호", type="password", on_change=check_password, key="password")
     st.stop()
@@ -346,5 +346,6 @@ else:
             st.rerun()
         else:
             st.sidebar.error("암호가 틀렸습니다.")
+
 
 
