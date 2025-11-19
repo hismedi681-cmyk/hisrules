@@ -197,7 +197,7 @@ try:
 except Exception:
     combined_pdf_url = None
 
-st.title("🏥 병원 규정 AI 검색기")
+st.title("🏥 히즈메디 규정 AI 검색기")
 
 # (전체 화면 모드)
 if st.session_state.view_mode == "fullscreen":
@@ -346,4 +346,5 @@ else:
             st.rerun()
         else:
             st.sidebar.error("암호가 틀렸습니다.")
+
 
