@@ -16,6 +16,17 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+# --- 1-1. 사용자 인증 함수 (로컬 환경 실행을 위해 가정된 함수) ---
+def check_password():
+    """Secrets에 설정된 비밀번호와 비교하여 인증합니다."""
+    # 이 부분은 실제 secrets 설정에 따라 다릅니다. 원본 코드를 기반으로 유지합니다.
+    if "password" not in st.session_state: return
+    if st.session_state["password"] == st.secrets["app_security"]["common_password"]:
+        st.session_state["is_authenticated"] = True
+        del st.session_state["password"]
+    else:
+        st.error("비밀번호 오류")
+
 # --- 2. Supabase 및 AI 모델 연결 ---
 @st.cache_resource
 def init_connections():
@@ -101,7 +112,7 @@ def get_pdf_bytes(url: str):
         st.error(f"❌ PDF 다운로드 오류: {e}")
         return None
 
-# ★★★ 수정된 set_pdf_url 함수 ★★★
+# ★★★ [수정] set_pdf_url 함수 정의 (TypeError 해결) ★★★
 def set_pdf_url(url: str, load_mode_page: int, ai_target_page: int):
     """
     load_mode_page: PDF 뷰어가 로드할 페이지 번호 (1=전체, >1=단일 페이지)
@@ -112,7 +123,7 @@ def set_pdf_url(url: str, load_mode_page: int, ai_target_page: int):
     st.session_state.ai_target_page = ai_target_page
     st.session_state.view_mode = "preview" 
 
-# ★★★ 최종 수정된 render_pdf_viewer_mode 함수 (요청하신 안내 문구 적용) ★★★
+# ★★★ 최종 수정된 render_pdf_viewer_mode 함수 ★★★
 def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
     """ 
     [듀얼 모드] target_load_page에 따라 로드 방식을 결정합니다.
@@ -136,7 +147,6 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
         
         # 안내 메시지 출력 (전체 로드 모드)
         if target_ai_page > 1:
-             # ★★★ 최종 안내 문구 적용 (페이지 번호로 스크롤 요청) ★★★
              st.info(f"📄 전체 문서 로드 완료. AI 검색 결과가 있는 **페이지 번호 {target_ai_page}**로 스크롤해서 가주세요.")
              
     else:
@@ -144,7 +154,7 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
         pages_to_load = [target_load_page]
         spinner_text = f"📄 AI 검색 타겟 쪽만 로딩 중..."
         
-        # ★★★ 최종 안내 문구 적용 (단일 페이지 로드 안내) ★★★
+        # 안내 메시지 출력 (단일 페이지 모드)
         st.info(f"⚠️ 현재 쪽은 AI 검색 결과 내용만 로드되었습니다. 문맥을 확인하려면 '📖 전체 규정 스크롤' 버튼을 이용해 주세요.")
         
     # 3. PDF 렌더링
@@ -163,29 +173,19 @@ def render_pdf_viewer_mode(pdf_url: str, page: int = 1):
 
 
 def set_pdf_url(url: str, page: int):
-    # 이 함수는 사용하지 않으므로 변경하지 않습니다.
+    # 이 함수는 사용하지 않습니다. 호출부에서 3개의 인자를 사용하도록 통일했습니다.
     st.session_state.current_pdf_url = url
     st.session_state.current_pdf_page = page
     st.session_state.view_mode = "preview" 
 
 # --- 4. UI 구성 (메인 루프) ---
 
-# (보안 체크)
-def check_password():
-    # 이 함수는 secrets 파일 설정에 따라 다릅니다. 원본 코드를 보존합니다.
-    if "password" not in st.session_state: return
-    if st.session_state["password"] == st.secrets["app_security"]["common_password"]:
-        st.session_state["is_authenticated"] = True
-        del st.session_state["password"]
-    else:
-        st.error("비밀번호 오류")
-
 # (세션 상태 초기화)
 if "is_authenticated" not in st.session_state: st.session_state.is_authenticated = False
 if "view_mode" not in st.session_state: st.session_state.view_mode = "preview"
 if "current_pdf_url" not in st.session_state: st.session_state.current_pdf_url = None
 if "current_pdf_page" not in st.session_state: st.session_state.current_pdf_page = 1
-if "ai_target_page" not in st.session_state: st.session_state.ai_target_page = 1 # ★★★ 추가/수정 ★★★
+if "ai_target_page" not in st.session_state: st.session_state.ai_target_page = 1 
 if "ai_status" not in st.session_state: st.session_state.ai_status = ""
 
 if not st.session_state.is_authenticated:
@@ -222,7 +222,7 @@ else:
             st.button(
                 "📂 [전체 합본 보기]", 
                 on_click=set_pdf_url, 
-                # ★★★ set_pdf_url 인자 수정: (url, load_mode=1, ai_target=1) ★★★
+                # load_mode=1 (전체), ai_target=1
                 args=(combined_pdf_url, 1, 1), 
                 key="btn_combined_pdf",
                 width='stretch'
@@ -271,7 +271,8 @@ else:
                                     
                                     # 메타데이터 제거 로직 적용
                                     for keyword in keywords_to_remove:
-                                        raw_text = re.sub(f'{re.escape(keyword)}[^\]]*\]', '', raw_text)
+                                        # rf''를 사용하여 정규식 이스케이프 경고를 피합니다.
+                                        raw_text = re.sub(rf'{re.escape(keyword)}[^\]]*\]', '', raw_text)
                                         
                                     clean_text = raw_text.replace("[본문]", "").strip()
                                     if clean_text.startswith("...Ÿ"): clean_text = clean_text.replace("...Ÿ", "...")
@@ -291,7 +292,7 @@ else:
                                             args=(pdf_url, row['page_num'], row['page_num']), 
                                             use_container_width=True
                                         )
-                                        # 3-2. ★★★ 전체 규정 스크롤 버튼 (안내) ★★★
+                                        # 3-2. ★★★ 전체 규정 스크롤 버튼 ★★★
                                         st.button(
                                             "📖 전체 규정 스크롤 (페이지 안내)",
                                             key=f"btn_chunk_full_{row['id']}",
@@ -320,7 +321,7 @@ else:
                             for _, row in std_df.iterrows():
                                 st.button(f"📄 {row['me_name']}", key=f"btn_{row['id']}", 
                                           on_click=set_pdf_url, 
-                                          # ★★★ set_pdf_url 인자 수정: (url, load_mode=1, ai_target=1) ★★★
+                                          # load_mode=1 (전체), ai_target=1
                                           args=(row['pdf_url'], 1, 1)) 
 
     with col_viewer:
